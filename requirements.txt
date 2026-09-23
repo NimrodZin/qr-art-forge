@@ -3,8 +3,9 @@ diffusers==0.30.3
 transformers==4.44.2
 accelerate==0.34.2
 safetensors
-gradio==4.44.0
+gradio==4.44.1
 huggingface_hub==0.25.2
+pydantic==2.10.6
 spaces
 qrcode[pil]==8.0
 opencv-python-headless==4.10.0.84
