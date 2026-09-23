@@ -41,8 +41,7 @@ def test_ui_api_info_builds():
 def test_requirements_pin_gradio_and_pydantic():
     for name in ("requirements.txt", "requirements-ci.txt"):
         lines = (ROOT / name).read_text().splitlines()
-        assert "gradio==4.44.1" in lines, name
-        assert "pydantic==2.10.6" in lines, name
+        assert "gradio==5.50.0" in lines, name
 
 
 def test_readme_front_matter_pins_python_version():
@@ -50,4 +49,4 @@ def test_readme_front_matter_pins_python_version():
     m = re.match(r"---\n(.*?)\n---\n", text, re.S)
     assert m
     assert "python_version: 3.11" in m.group(1).splitlines()
-    assert "sdk_version: 4.44.1" in m.group(1).splitlines()
+    assert "sdk_version: 5.50.0" in m.group(1).splitlines()

@@ -1,7 +1,5 @@
 pytest==8.3.3
-gradio==4.44.1
-huggingface_hub==0.25.2
-pydantic==2.10.6
+gradio==5.50.0
 qrcode[pil]==8.0
 opencv-python-headless==4.10.0.84
 zxing-cpp==2.2.0
