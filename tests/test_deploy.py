@@ -22,3 +22,12 @@ def test_readme_front_matter_is_gradio_space():
     front = m.group(1).splitlines()
     assert "sdk: gradio" in front
     assert "app_file: app.py" in front
+
+
+def test_readme_short_description_within_hub_limit():
+    text = (ROOT / "README.md").read_text()
+    m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+    assert m
+    m = re.search(r"^short_description:\s*(.*?)\s*$", m.group(1), re.M)
+    assert m
+    assert len(m.group(1)) <= 60

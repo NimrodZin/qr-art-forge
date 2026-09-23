@@ -8,7 +8,7 @@ sdk_version: 4.44.0
 app_file: app.py
 pinned: false
 license: mit
-short_description: Aesthetic QR codes that actually scan (SD1.5 + QR Code Monster v2)
+short_description: Aesthetic QR codes that actually scan
 ---
 
 # QR Art Forge
