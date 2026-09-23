@@ -1,0 +1,13 @@
+torch
+diffusers==0.30.3
+transformers==4.44.2
+accelerate==0.34.2
+safetensors
+gradio==4.44.0
+huggingface_hub==0.25.2
+spaces
+qrcode[pil]==8.0
+opencv-python-headless==4.10.0.84
+zxing-cpp==2.2.0
+numpy==1.26.4
+Pillow==10.4.0

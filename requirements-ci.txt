@@ -1,0 +1,8 @@
+pytest==8.3.3
+gradio==4.44.0
+huggingface_hub==0.25.2
+qrcode[pil]==8.0
+opencv-python-headless==4.10.0.84
+zxing-cpp==2.2.0
+numpy==1.26.4
+Pillow==10.4.0
