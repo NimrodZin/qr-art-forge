@@ -1,7 +1,7 @@
-"""Scan validation for aesthetic QR codes.
+"""Scan validation for aesthetic QR codes (docs/02 v0.2).
 
-A candidate passes only if it decodes to the expected payload under all
-conditions below, using two independent decoders (OpenCV and zxing-cpp).
+A candidate passes only if zxing-cpp decodes the exact payload under all three
+softened conditions below. OpenCV is run and reported as advisory only.
 """
 from __future__ import annotations
 import numpy as np
@@ -29,6 +29,13 @@ def _decode_zx(img: np.ndarray) -> str:
     return res[0].text if res else ""
 
 
+def _soften(img: np.ndarray) -> np.ndarray:
+    """S(img): phone optics — blur, then contrast x0.85 and brightness +20."""
+    w = img.shape[1]
+    blur = cv2.GaussianBlur(img, (0, 0), sigmaX=max(1.0, w / 600))
+    return cv2.convertScaleAbs(blur, alpha=0.85, beta=20)
+
+
 def _conditions(img: np.ndarray) -> dict[str, np.ndarray]:
     h, w = img.shape[:2]
     out = {"full": img}
@@ -43,40 +50,28 @@ def _conditions(img: np.ndarray) -> dict[str, np.ndarray]:
     M = cv2.getPerspectiveTransform(src, dst)
     out["tilt"] = cv2.warpPerspective(img, M, (w, h), borderValue=(255, 255, 255))
 
-    # Slight blur + contrast loss (cheap screen / print)
-    blur = cv2.GaussianBlur(img, (0, 0), sigmaX=max(1.0, w / 600))
-    out["soft"] = cv2.convertScaleAbs(blur, alpha=0.85, beta=20)
-    return out
+    # Every condition is seen through phone optics
+    return {name: _soften(v) for name, v in out.items()}
 
 
 def validate(pil_img: Image.Image, expected: str) -> dict:
-    """Return {"pass": bool, "score": int, "results": {cond: {"cv": bool, "zx": bool}}}."""
+    """Return {"pass", "score", "max": 3, "results": {cond: {"zx": bool, "cv": bool}}}.
+
+    zxing gates; OpenCV is advisory and never affects pass or score.
+    """
     img = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
     results = {}
-    hits = 0
-    total = 0
     for name, variant in _conditions(img).items():
-        cv_ok = _decode_cv(variant) == expected
-        zx_ok = _decode_zx(variant) == expected if HAVE_ZXING else None
-        results[name] = {"cv": cv_ok, "zx": zx_ok}
-        for ok in (cv_ok, zx_ok):
-            if ok is None:
-                continue
-            total += 1
-            hits += int(ok)
-    # Pass = every decoder agrees on every condition
-    passed = all(v["cv"] and (v["zx"] is None or v["zx"]) for v in results.values())
-    return {"pass": passed, "score": hits, "max": total, "results": results}
+        results[name] = {"zx": _decode_zx(variant) == expected,
+                         "cv": _decode_cv(variant) == expected}
+    score = sum(r["zx"] for r in results.values())
+    return {"pass": score == len(results), "score": score, "max": len(results),
+            "results": results}
 
 
 def summary_line(v: dict) -> str:
     def mark(ok: bool) -> str:
         return "✓" if ok else "✗"
 
-    flags = []
-    for cond, r in v["results"].items():
-        flag = f"{cond} cv{mark(r['cv'])}"
-        if r["zx"] is not None:
-            flag += f" zx{mark(r['zx'])}"
-        flags.append(flag)
+    flags = [f"{cond} zx{mark(r['zx'])} (cv{mark(r['cv'])})" for cond, r in v["results"].items()]
     return ("PASS " if v["pass"] else "FAIL ") + " | ".join(flags) + f"  ({v['score']}/{v['max']})"
