@@ -23,8 +23,8 @@ def no_env(monkeypatch):
 
 
 def _entries():
-    v = {"pass": False, "score": 0, "max": 8,
-         "results": {c: {"cv": False, "zx": False} for c in ("full", "small", "tilt", "soft")}}
+    v = {"pass": False, "score": 0, "max": 3,
+         "results": {c: {"zx": False, "cv": False} for c in ("full", "small", "tilt")}}
     small = Image.new("RGB", (512, 384), (10, 20, 30))
     return [("seed123", BAD, v), ("seed123-rescue", small, v)]
 
@@ -167,8 +167,8 @@ def test_run_forge_archives_failed_rescue_attempts(monkeypatch):
                         lambda r: (seen.setdefault("r", r), "x")[1])
     # force rescue eligibility: make validate report a near-miss for the original
     real_validate = app.validate
-    near = {"pass": False, "score": 6, "max": 8,
-            "results": {c: {"cv": True, "zx": c != "soft"} for c in ("full", "small", "tilt", "soft")}}
+    near = {"pass": False, "score": 2, "max": 3,
+            "results": {c: {"zx": c != "tilt", "cv": True} for c in ("full", "small", "tilt")}}
     monkeypatch.setattr(app, "validate",
                         lambda im, p: near if im is BAD else real_validate(im, p))
     rescued = Image.new("RGB", (768, 768), (100, 100, 100))
@@ -185,8 +185,8 @@ def test_run_forge_never_archives_a_passing_rescue(monkeypatch):
                         lambda r: (seen.setdefault("r", r), "x")[1])
     good = make_qr(PAY)
     real_validate = app.validate
-    near = {"pass": False, "score": 6, "max": 8,
-            "results": {c: {"cv": True, "zx": c != "soft"} for c in ("full", "small", "tilt", "soft")}}
+    near = {"pass": False, "score": 2, "max": 3,
+            "results": {c: {"zx": c != "tilt", "cv": True} for c in ("full", "small", "tilt")}}
     monkeypatch.setattr(app, "validate",
                         lambda im, p: near if im is BAD else real_validate(im, p))
     surv, _, _ = app.run_forge("nimrodzin.com", "p", 1, 1.35, 25, 7, True, 9,

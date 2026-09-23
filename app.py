@@ -136,7 +136,7 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
         tag = f"seed {seed+i}: " + summary_line(v)
         if not v["pass"]:
             rejects.append((f"seed{seed+i}", im, v))
-        if not v["pass"] and rescue and v["score"] >= v["max"] // 2:
+        if not v["pass"] and rescue and v["score"] >= 1:
             im2 = pipes["rescue"](prompt, im, control, float(weight), int(steps), float(cfg), seed + i)
             v2 = validate(im2, payload)
             tag += " → rescue " + summary_line(v2)
@@ -171,7 +171,7 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="QR Art Forge") as demo:
         gr.Markdown("# QR Art Forge\n"
                     "Aesthetic QR codes a human sees as a picture and a phone reads as a link. "
-                    "Every result shown has passed two decoders under four scan conditions.")
+                    "Every result shown has been read by a phone-grade decoder under three scan conditions.")
         with gr.Row():
             with gr.Column(scale=1):
                 payload = gr.Textbox(label="URL or text", placeholder="example.com")
