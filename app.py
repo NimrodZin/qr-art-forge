@@ -1,7 +1,10 @@
 """QR Art Forge — aesthetic QR codes that actually scan. See docs/ for the contract."""
 from __future__ import annotations
+import io
+import json
 import os
 import random
+from datetime import datetime, timezone
 from typing import Callable
 
 import gradio as gr
@@ -71,6 +74,47 @@ def get_pipes() -> dict:
     return _pipes
 
 
+# ---------------------------------------------------------------- reject archive (owner-only diagnostics)
+def build_reject_records(payload: str, settings: dict,
+                         entries: list[tuple[str, Image.Image, dict]],
+                         now: datetime | None = None) -> list[tuple[str, bytes, dict]]:
+    """Pure: (label, image, validate-result) → (runs/<run_id>/<label>.png, png_bytes, meta)."""
+    now = now or datetime.now(timezone.utc)
+    run_id = now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{settings['seed']}"
+    records = []
+    for label, im, v in entries:
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        meta = {"run_id": run_id, "label": label, "payload": payload, "settings": settings,
+                "pass": v["pass"], "score": v["score"], "max": v["max"], "results": v["results"]}
+        records.append((f"runs/{run_id}/{label}.png", buf.getvalue(), meta))
+    return records
+
+
+def archive_rejects(records: list[tuple[str, bytes, dict]]) -> str:
+    """Upload to the owner's private dataset if HF_TOKEN and REJECTS_REPO are set. Never raises."""
+    if not records:
+        return "no rejects to archive"
+    token, repo = os.environ.get("HF_TOKEN"), os.environ.get("REJECTS_REPO")
+    if not (token and repo):
+        return "rejects not archived (HF_TOKEN/REJECTS_REPO unset)"
+    try:
+        import huggingface_hub as hf
+        api = hf.HfApi(token=token)
+        api.create_repo(repo, repo_type="dataset", private=True, exist_ok=True)
+        ops = []
+        for path, png, meta in records:
+            ops.append(hf.CommitOperationAdd(path_in_repo=path, path_or_fileobj=png))
+            ops.append(hf.CommitOperationAdd(
+                path_in_repo=path[:-len(".png")] + ".json",
+                path_or_fileobj=json.dumps(meta, indent=2).encode()))
+        info = api.create_commit(repo, operations=ops, repo_type="dataset",
+                                 commit_message=f"rejects {records[0][2]['run_id']}")
+        return str(info.commit_url)
+    except Exception as e:  # message may carry request details; report the type only
+        return f"archive failed: {type(e).__name__}"
+
+
 # ---------------------------------------------------------------- core loop
 def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: int,
               cfg: float, rescue: bool, seed: int, pipes: dict | None = None,
@@ -84,18 +128,22 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
         progress(0.05, desc="Generating batch")
     imgs = pipes["gen"](prompt, control, int(batch), float(weight), int(steps), float(cfg), seed)
 
-    survivors, report = [], []
+    survivors, report, rejects = [], [], []
     for i, im in enumerate(imgs):
         if progress:
             progress(0.5 + 0.4 * i / max(1, len(imgs)), desc=f"Testing {i+1}/{len(imgs)}")
         v = validate(im, payload)
         tag = f"seed {seed+i}: " + summary_line(v)
+        if not v["pass"]:
+            rejects.append((f"seed{seed+i}", im, v))
         if not v["pass"] and rescue and v["score"] >= v["max"] // 2:
             im2 = pipes["rescue"](prompt, im, control, float(weight), int(steps), float(cfg), seed + i)
             v2 = validate(im2, payload)
             tag += " → rescue " + summary_line(v2)
             if v2["pass"]:
                 im, v = im2, v2
+            else:
+                rejects.append((f"seed{seed+i}-rescue", im2, v2))
         report.append(tag)
         if v["pass"]:  # THE GATE — the only way into the gallery
             survivors.append((im, f"seed {seed+i}"))
@@ -104,6 +152,9 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
     if warn:
         header += warn + "\n"
     header += "Always test on a real phone before publishing.\n\n"
+    settings = {"prompt": prompt, "batch": int(batch), "weight": float(weight),
+                "steps": int(steps), "cfg": float(cfg), "rescue": bool(rescue), "seed": seed}
+    report.append(archive_rejects(build_reject_records(payload, settings, rejects)))
     return survivors, header + "\n".join(report), control
 
 
@@ -135,6 +186,7 @@ def build_ui() -> gr.Blocks:
                     rescue = gr.Checkbox(value=True, label="Rescue near-misses")
                     seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
                 go = gr.Button("Forge", variant="primary")
+                gr.Markdown("Failed generations may be stored privately to improve quality.")
             with gr.Column(scale=2):
                 gallery = gr.Gallery(label="Scannable results", columns=2, height=560)
                 report = gr.Textbox(label="Scan report", lines=8)

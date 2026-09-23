@@ -1,4 +1,5 @@
 """Hard constraint: nothing unscannable reaches the gallery."""
+import pytest
 from PIL import Image
 import app
 from qrbuild import make_qr
@@ -6,6 +7,12 @@ from qrbuild import make_qr
 PAY = "nimrodzin.com"
 GOOD = make_qr("https://" + PAY)
 BAD = Image.new("RGB", (768, 768), (90, 90, 90))
+
+
+@pytest.fixture(autouse=True)
+def no_archive_env(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("REJECTS_REPO", raising=False)
 
 
 def fake_pipes(rescue_returns):
@@ -40,3 +47,9 @@ def test_rescue_only_for_near_misses():
 def test_report_shows_encoded_payload():
     _, report, _ = app.run_forge(PAY, "p", 1, 1.35, 25, 7, False, 1, pipes=fake_pipes(BAD))
     assert "Encoded: https://nimrodzin.com" in report
+
+
+def test_rejects_never_enter_gallery_and_archive_line_is_last():
+    surv, report, _ = app.run_forge(PAY, "p", 3, 1.35, 25, 7, True, 1, pipes=fake_pipes(BAD))
+    assert all(im is not BAD for im, _ in surv)
+    assert report.splitlines()[-1] == "rejects not archived (HF_TOKEN/REJECTS_REPO unset)"
