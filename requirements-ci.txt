@@ -5,3 +5,7 @@ opencv-python-headless==4.10.0.84
 zxing-cpp==2.2.0
 numpy==1.26.4
 Pillow==10.4.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.4.1
+diffusers==0.30.3
+transformers==4.44.2

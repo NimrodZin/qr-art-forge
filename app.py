@@ -27,17 +27,22 @@ except Exception:  # local / CI
 _pipes: dict | None = None
 
 
+def make_scheduler(config: dict):
+    from diffusers import DPMSolverMultistepScheduler
+    return DPMSolverMultistepScheduler.from_config(
+        config, use_karras_sigmas=True, algorithm_type="dpmsolver++")
+
+
 def _load_pipes() -> dict:
     import torch
     from diffusers import (ControlNetModel, StableDiffusionControlNetPipeline,
-                           StableDiffusionControlNetImg2ImgPipeline, DPMSolverMultistepScheduler)
+                           StableDiffusionControlNetImg2ImgPipeline)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if device == "cuda" else torch.float32
     cn = ControlNetModel.from_pretrained(CN, subfolder="v2", torch_dtype=dtype)
     pipe = StableDiffusionControlNetPipeline.from_pretrained(
         BASE, controlnet=cn, torch_dtype=dtype, safety_checker=None)
-    pipe.scheduler = DPMSolverMultistepScheduler.from_config(
-        pipe.scheduler.config, use_karras_sigmas=True)
+    pipe.scheduler = make_scheduler(pipe.scheduler.config)
     i2i = StableDiffusionControlNetImg2ImgPipeline(**pipe.components)
     pipe.to(device)
     i2i.to(device)
