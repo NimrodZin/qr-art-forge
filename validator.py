@@ -70,8 +70,13 @@ def validate(pil_img: Image.Image, expected: str) -> dict:
 
 
 def summary_line(v: dict) -> str:
+    def mark(ok: bool) -> str:
+        return "✓" if ok else "✗"
+
     flags = []
     for cond, r in v["results"].items():
-        mark = "✓" if r["cv"] and (r["zx"] is None or r["zx"]) else "✗"
-        flags.append(f"{cond}{mark}")
-    return ("PASS " if v["pass"] else "FAIL ") + " ".join(flags) + f"  ({v['score']}/{v['max']})"
+        flag = f"{cond} cv{mark(r['cv'])}"
+        if r["zx"] is not None:
+            flag += f" zx{mark(r['zx'])}"
+        flags.append(flag)
+    return ("PASS " if v["pass"] else "FAIL ") + " | ".join(flags) + f"  ({v['score']}/{v['max']})"
