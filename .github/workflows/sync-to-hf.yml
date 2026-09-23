@@ -1,0 +1,11 @@
+name: sync-to-hf
+on:
+  push:
+    branches: [main]
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: git push --force https://zinim78:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/zinim78/qr-art-forge main:main
