@@ -201,3 +201,11 @@ def _png(im):
     buf = io.BytesIO()
     im.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def test_ui_discloses_reject_storage():
+    import gradio as gr
+    demo = app.build_ui()
+    texts = [b.value for b in demo.blocks.values() if isinstance(b, gr.Markdown)]
+    assert any("Failed generations may be stored privately to improve quality." in t
+               for t in texts)

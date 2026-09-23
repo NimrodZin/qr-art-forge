@@ -186,6 +186,7 @@ def build_ui() -> gr.Blocks:
                     rescue = gr.Checkbox(value=True, label="Rescue near-misses")
                     seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
                 go = gr.Button("Forge", variant="primary")
+                gr.Markdown("Failed generations may be stored privately to improve quality.")
             with gr.Column(scale=2):
                 gallery = gr.Gallery(label="Scannable results", columns=2, height=560)
                 report = gr.Textbox(label="Scan report", lines=8)
