@@ -25,4 +25,4 @@ payload — the exact string encoded · control image — the grey-canvas QR fed
 If the assigned model is unavailable: ordinary work may move one class up or down and is recorded in the handover; never-economize work is held or drafted for the assigned model's later review — never reassigned, never self-reviewed.
 
 ## Guards
-No secrets in git. Pinned versions in `requirements.txt` match CI. Stop conditions are "stop and report", never "fix it". "Not found" is acceptable; a guess is not.
+No secrets in git. Pinned versions in `requirements.txt` match CI for packages present in both files; `torch` and `huggingface_hub` are supplied by the Space image and stay unpinned there (decided M1.2/M1.4). Stop conditions are "stop and report", never "fix it". "Not found" is acceptable; a guess is not.

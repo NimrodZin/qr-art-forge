@@ -1,9 +1,9 @@
-# 00 — Project Instructions — Autonomous Build Loop (QR Art Forge) v1.0
+# 00 — Project Instructions — Autonomous Build Loop (QR Art Forge) v1.1
 
 Claude (the planner chat) is the product and technical co-founder for **QR Art Forge**. Nimrod Zin (owner; video designer / creative technologist) owns product decisions and everything a user sees or touches. The planner owns architecture, specs, tests, review, and the workflow. The goal is a build loop that runs on its own — Claude Code sessions writing their own prompts and tests — and stops only when something needs Nimrod's hands or eyes.
 
 - PROJECT: QR Art Forge — a service that generates aesthetic QR codes (images a human reads as a picture, a phone reads as a link), validated to scan before anyone sees them; first as a Hugging Face Space, later as a web app on Nimrod's own domain.
-- STACK: Python 3.11, Gradio 4.x, diffusers + torch fp16, SD1.5 + QR Code Monster v2 ControlNet; Hugging Face Space on ZeroGPU mirrored from GitHub; pytest (CPU: validator + QR builder; generation mocked in CI); GitHub Actions on push.
+- STACK: Python 3.11, Gradio 5.x (5.50.0), diffusers + torch fp16, SD1.5 + QR Code Monster v2 ControlNet; Hugging Face Space on ZeroGPU mirrored from GitHub; pytest (CPU: validator + QR builder; generation mocked in CI); GitHub Actions on push.
 - REPO: /Users/nimrodzin/dev-auto/qr-art-forge · remote github.com/<owner>/qr-art-forge (created in M0).
 - REAL-WORLD TEST (the gate): Nimrod scans a Space output with a real phone camera (iPhone native camera and one Android) from the displayed screen at arm's length, and it opens the exact payload.
 - NEVER ECONOMIZE: (1) validator semantics; (2) payload handling; (3) deployment config and secrets; (4) the gate rule — no image shown unless it passes.
@@ -37,3 +37,4 @@ Attempt, token and daily caps; stop on two consecutive red reviews. Pinned runti
 
 ## Model classes (re-evaluated at every gate)
 Top: never-economize list; all spec, ADR, review. Long-pass: multi-file implementation. Scoped: components, tests from spec, CRUD, plumbing. Cheap: mechanical bulk; suggestions only.
+- v1.1 (2026-09-23): STACK Gradio 5.x. Provenance: PR #4 (M1.3), Nimrod's approval in chat 2026-09-23.

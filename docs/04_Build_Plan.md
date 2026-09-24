@@ -22,4 +22,4 @@ Front end on Nimrod's domain, backend API, rate limiting (Open Discussion 5). Ga
 The never-economize list is never downgraded.
 
 ## Gate log
-(empty)
+- 2026-09-23 M1 (Space live): Space builds and generates (M1.3–M1.4). Validator v0.1 rejected 16/16 candidates across strengths 0.8/1.35/1.7/2.0 (peony, batch 4). Phone test of archived rejects (run 1382759530): 4/4 read on iPhone and Android; criterion 3 (poster): yes. Conclusion: validator too strict → 02 v0.2 (PR #7). Gate on v0.2 pending (ZeroGPU quota; resumes 2026-09-24).
