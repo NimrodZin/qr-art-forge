@@ -13,6 +13,7 @@ Every change bumps the version and records what changed under "Changes".
 
 ## Validation — NEVER ECONOMIZE (v0.2)
 - Softening S(img): Gaussian blur σ = max(1, w/600), then contrast ×0.85, brightness +20 — simulates phone optics.
+- σ is computed from the width of the variant being softened (so `small` gets σ = 1.0).
 - Conditions, each applied to the exact candidate pixels and then softened: `full` = S(img); `small` = S(resize longest side 480, INTER_AREA); `tilt` = S(perspective warp TL (6%w,4%h), TR (94%w,0), BR (w,h), BL (0,97%h), white border).
 - Gating decoder: zxing-cpp. OpenCV `QRCodeDetector` is run and reported as advisory only.
 - **Pass** ⇔ zxing returns the exact payload string under all three conditions.
@@ -33,3 +34,4 @@ No image reaches the gallery without `validate(image, payload)["pass"] == True` 
 ## Changes
 - v0.1 — initial.
 - v0.2 (2026-09-23) — zxing gates, OpenCV advisory; all conditions softened; three conditions. Provenance: run 1382759530, 4/4 rejects read on iPhone and Android while scoring ≤3/8 under v0.1; every one had zx-soft ✓ (Nimrod, this date).
+- v0.2.1 (2026-09-23) — clarified σ basis. Provenance: M1.6 handover, Not certain 2.

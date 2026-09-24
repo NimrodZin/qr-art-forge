@@ -19,7 +19,7 @@ Generates QR codes that read to a human as an image and to a phone camera as a l
 **Pipeline**
 1. Level-H QR control image on a gray canvas (QR Code Monster v2 convention)
 2. Batch generation with Stable Diffusion 1.5 + `monster-labs/control_v1p_sd15_qrcode_monster` (v2)
-3. Every candidate is decoded by OpenCV **and** zxing-cpp under four conditions: full-res, phone-size downscale, perspective tilt, blur + contrast loss
+3. Every candidate is decoded by zxing-cpp under three phone-softened conditions (full, downscale, tilt); OpenCV is reported as advisory
 4. Near-misses get an img2img rescue pass at higher ControlNet weight
 5. Only images that pass everything are shown
 

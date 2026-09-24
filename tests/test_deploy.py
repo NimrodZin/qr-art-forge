@@ -38,7 +38,7 @@ def test_ui_api_info_builds():
     app.build_ui().get_api_info()
 
 
-def test_requirements_pin_gradio_and_pydantic():
+def test_requirements_pin_gradio():
     for name in ("requirements.txt", "requirements-ci.txt"):
         lines = (ROOT / name).read_text().splitlines()
         assert "gradio==5.50.0" in lines, name
