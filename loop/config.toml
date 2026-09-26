@@ -1,0 +1,47 @@
+# Loop caps and paths (docs/06_Loop_Spec.md §5). Read by loop/config.py.
+
+steps_per_day = 3
+attempts_per_step = 2
+max_turns = 40
+daily_cost_ceiling_usd = 15
+consecutive_red_reviews_stop = 2
+session_timeout_s = 3600
+
+# Command lines. LOOP_CLAUDE_CMD / LOOP_GH_CMD in the environment override these (tests, --dry-run).
+claude_cmd = "claude"
+gh_cmd = "gh"
+pytest_cmd = [".venv/Scripts/python.exe", "-m", "pytest", "-q"]
+
+# Real-generation test (06 §1a): peony, defaults; pass iff at least gpu_min_pass of 4 survive.
+gpu_cmd = ['E:\qr-art-forge\.venv\Scripts\python.exe', 'local\run_batch.py', '--seed', '12345']
+gpu_min_pass = 2
+gpu_timeout_s = 1800
+
+comfy_url = "http://127.0.0.1:8188"
+comfy_wait_s = 600          # wait this long for ComfyUI's queue to empty, then stop
+ci_timeout_s = 1200
+ci_poll_s = 30
+
+base_branch = "main"
+phase = "C · M2"
+
+# Pinned model IDs per task class (06 §2). Probed 2026-09-26: alias "opus" → claude-opus-5-5.
+[models]
+top = "claude-opus-5-5"
+long-pass = "claude-opus-5-5"
+scoped = "claude-sonnet-5"
+cheap = "claude-haiku-4-5-20251001"
+
+# 06 §3. A path ending in "/" is a prefix. The gate is the THE GATE line in app.py, ± gate_context lines.
+[never_economize]
+paths = ["validator.py", "qrbuild.py", "README.md", ".github/"]
+gate_file = "app.py"
+gate_marker = "THE GATE"
+gate_context = 3
+
+# Set for pytest, the GPU test and sessions only if the file exists (AVG HTTPS interception on
+# the PC; local/REPORT-local.md §6).
+[ca_env]
+SSL_CERT_FILE = 'E:\comfy\ca-bundle.pem'
+REQUESTS_CA_BUNDLE = 'E:\comfy\ca-bundle.pem'
+CURL_CA_BUNDLE = 'E:\comfy\ca-bundle.pem'

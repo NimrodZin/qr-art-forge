@@ -26,3 +26,8 @@ The never-economize list is never downgraded.
 - 2026-09-23 M1 (Space live): Space builds and generates (M1.3–M1.4). Validator v0.1 rejected 16/16 candidates across strengths 0.8/1.35/1.7/2.0 (peony, batch 4). Phone test of archived rejects (run 1382759530): 4/4 read on iPhone and Android; criterion 3 (poster): yes. Conclusion: validator too strict → 02 v0.2 (PR #7). Gate on v0.2 pending (ZeroGPU quota; resumes 2026-09-24).
 - 2026-09-24 M1 gate PASSED on validator v0.2/v0.3: peony 4/4 shown, iPhone + Android 4/4, 21 s, poster yes. Criteria 1–5 met. Phase B complete.
 - 2026-09-25 local env on RTX 4070 (local/REPORT-local.md): peony 64/64 over 16 batches, ~21 s headless; fisherman 9/12; finding → M2.1 (merged 9e5662f).
+
+## Queue
+- [ ] m2-5 · Pilot: bleed canvas — 768×1024 control image, code centred, model paints beyond it (OD 6.1) · class=scoped · lane=ordinary · paths=qrbuild.py,app.py,tests/ · touches_gpu=yes
+- [ ] m2-6 · Negative prompt field under Advanced (OD 9) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=no
+- [ ] m2-7 · VAE slicing on CUDA behind env flag, default off (P5) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes
