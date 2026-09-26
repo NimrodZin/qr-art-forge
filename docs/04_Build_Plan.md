@@ -31,4 +31,3 @@ The never-economize list is never downgraded.
 - [ ] m2-5 · Pilot: bleed canvas — 768×1024 control image, code centred, model paints beyond it (OD 6.1) · class=scoped · lane=ordinary · paths=qrbuild.py,app.py,tests/ · touches_gpu=yes
 - [ ] m2-6 · Negative prompt field under Advanced (OD 9) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=no
 - [ ] m2-7 · VAE slicing on CUDA behind env flag, default off (P5) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes
-- [ ] m2-8 · Register pytest gpu marker (pytest.ini, tests/conftest.py) and deselect it in CI · class=scoped · lane=never-economize · paths=pytest.ini,tests/conftest.py,.github/workflows/tests.yml · touches_gpu=no
