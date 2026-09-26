@@ -1,0 +1,314 @@
+"""QR Art Forge build loop driver (docs/06_Loop_Spec.md).
+
+    python loop/run.py [--dry-run] [--once]
+
+Per step: Architect → Tester (red on main) → [Implementer → CI → Reviewer] × attempts →
+GPU test if touches_gpu → merge (ordinary lane, APPROVE, CI green, no never-economize path)
+or stop PR-ready with needs-nimrod. Any stop opens/appends issue `loop: needs-nimrod <id>`.
+"""
+from __future__ import annotations
+
+import os
+import sys
+
+if __name__ == "__main__":  # import the package from the repo root; loop/queue.py must not shadow stdlib queue
+    sys.path[0] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+import argparse
+import datetime
+import json
+import tempfile
+from pathlib import Path
+
+from loop import config, gates, queue, session
+from loop.sh import gh, git, run
+
+ROOT = Path(__file__).resolve().parent.parent
+LOOP = ROOT / "loop"
+PLAN = Path("docs") / "04_Build_Plan.md"
+SKIP = ("__pycache__/", ".pytest_cache/")
+
+
+class Stop(Exception):
+    """A stop condition (06 §5): the loop pauses and asks Nimrod."""
+
+
+def within(path: str, allowed: list[str]) -> bool:
+    return any(path == a.rstrip("/") or path.startswith(a.rstrip("/") + "/") for a in allowed)
+
+
+def parse_verdict(text: str) -> tuple[bool, str]:
+    """Line 1 is the header; the first non-blank line after it is `APPROVE` or the defect list."""
+    body = text.split("## Handover")[0].strip().splitlines()[1:]
+    body = [l for l in body if l.strip()]
+    if body and body[0].strip().strip("*`").strip() == "APPROVE":
+        return True, ""
+    return False, "\n".join(body) or "(reviewer gave no verdict)"
+
+
+class Driver:
+    def __init__(self, cfg: dict, repo, runs_dir):
+        self.cfg, self.repo, self.runs = cfg, Path(repo), Path(runs_dir)
+        self.base = cfg.get("base_branch", "main")
+        self.pr_url = None
+
+    # -- bookkeeping ---------------------------------------------------------------------
+    def log(self, step, msg: str) -> None:
+        d = self.runs / step.id
+        d.mkdir(parents=True, exist_ok=True)
+        line = f"- {datetime.datetime.now().isoformat(timespec='seconds')} · {msg}"
+        with open(d / "log.md", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        print(f"[{step.id}] {line[2:]}", flush=True)
+
+    def steps_started_today(self) -> int:
+        today = f"- {datetime.date.today().isoformat()}"
+        return sum(any(l.startswith(today) and "step start" in l
+                       for l in f.read_text(encoding="utf-8").splitlines())
+                   for f in self.runs.glob("*/log.md"))
+
+    def check_budget(self) -> None:
+        ok, spent = gates.budget_ok(self.cfg, self.runs)
+        if not ok:
+            raise Stop(f"cap: daily budget — spent {spent:.2f} of {self.cfg['daily_cost_ceiling_usd']} USD today")
+
+    # -- git -----------------------------------------------------------------------------
+    def changed(self) -> list[str]:
+        out = git(self.repo, "status", "--porcelain", "-uall")
+        paths = [l[3:].split(" -> ")[-1].strip('"') for l in out.splitlines() if l.strip()]
+        return [p for p in paths if not any(s in p for s in SKIP)]
+
+    def expect_changes(self, step, role: str, allowed: list[str]) -> list[str]:
+        paths = self.changed()
+        outside = [p for p in paths if not within(p, allowed)]
+        if outside:
+            raise Stop(f"{role} wrote outside its paths {allowed or '(none)'}: {', '.join(outside)}")
+        return paths
+
+    def commit(self, paths: list[str], what: str, step) -> None:
+        git(self.repo, "add", "-A", "--", *paths)
+        git(self.repo, "commit", "-q", "-m", f"loop {step.id}: {what}")
+
+    def push(self, branch: str) -> None:
+        git(self.repo, "push", "-q", "-u", "origin", branch)
+
+    @property
+    def pr(self) -> str:
+        return self.pr_url.rstrip("/").rsplit("/", 1)[-1]
+
+    def pytest(self, *args) -> tuple[int, str]:
+        rc, out, err = run([*self.cfg["pytest_cmd"], *args], self.repo, self.cfg, check=False, timeout=1800)
+        return rc, "\n".join((out + err).strip().splitlines()[-3:])
+
+    # -- sessions ------------------------------------------------------------------------
+    def session(self, role: str, step, extra: dict, attempt: int = 1):
+        self.check_budget()
+        r = session.run_role(role, step, extra, self.cfg, self.repo, self.runs, attempt)
+        self.log(step, f"{role} #{attempt} · {r.duration_s:.0f}s · {r.cost_usd:.2f} USD · "
+                       f"{'ERROR ' + r.error if r.is_error else 'ok'}")
+        if r.is_error:
+            raise Stop(f"{role} session error: {r.error}")
+        return r
+
+    # -- the step ------------------------------------------------------------------------
+    def preflight(self, step) -> None:
+        if self.steps_started_today() >= self.cfg["steps_per_day"]:
+            raise Stop(f"cap: steps_per_day ({self.cfg['steps_per_day']}) reached")
+        self.check_budget()
+        if git(self.repo, "branch", "--show-current").strip() != self.base or self.changed():
+            raise Stop(f"repo not on a clean {self.base}")
+
+    def run_step(self, step) -> None:
+        self.pr_url = None
+        self.preflight(step)
+        self.log(step, f"step start · {step.title} · class={step.cls} lane={step.lane} gpu={step.touches_gpu}")
+        base_hash = git(self.repo, "rev-parse", "--short", "HEAD").strip()
+        branch = f"loop/{step.id}"
+        if git(self.repo, "branch", "--list", branch).strip():
+            raise Stop(f"branch {branch} already exists (earlier run?)")
+        git(self.repo, "checkout", "-q", "-b", branch)
+
+        spec = self.session("architect", step, {}).text
+        self.expect_changes(step, "architect", [])
+        spec_file = f"steps/{step.id}/spec.md"
+        (self.repo / spec_file).parent.mkdir(parents=True, exist_ok=True)
+        (self.repo / spec_file).write_text(spec.rstrip() + "\n", encoding="utf-8")
+        self.commit([spec_file], "spec", step)
+
+        self.session("tester", step, {"spec": spec})
+        tests = self.expect_changes(step, "tester", ["tests/"])
+        pyfiles = [t for t in tests if t.endswith(".py") and (self.repo / t).exists()]
+        if not pyfiles:
+            raise Stop("tester wrote no test files")
+        rc, tail = self.pytest(*pyfiles)
+        self.log(step, f"tests on main + spec: exit {rc} · {tail.splitlines()[-1] if tail else ''}")
+        if rc == 0:
+            raise Stop("tests are not red on main (they pass before implementation)")
+        if rc not in (1, 2):
+            raise Stop(f"tests did not run (pytest exit {rc}): {tail}")
+        self.commit(tests, "tests (red)", step)
+
+        impl_paths = [p for p in step.paths if not within(p, ["tests/", "docs/", "steps/"])]
+        defects, red = "", 0
+        for attempt in range(1, self.cfg["attempts_per_step"] + 1):
+            self.session("implementer", step, {"spec": spec, "defects": defects}, attempt)
+            changed = self.expect_changes(step, "implementer", impl_paths)
+            if changed:
+                self.commit(changed, f"implementation (attempt {attempt})", step)
+            else:
+                self.log(step, "implementer changed nothing")
+            self.push(branch)
+            if not self.pr_url:
+                _, out, _ = gh(self.cfg, self.repo, "pr", "create", "--base", self.base, "--head", branch,
+                               "--title", f"{step.id}: {step.title}", "--body",
+                               f"Loop step `{step.id}` (class {step.cls}, lane {step.lane}).\n\n"
+                               f"Spec: `{spec_file}`. Log: `loop/runs/{step.id}/log.md` on the PC.\n\n"
+                               "🤖 Generated with [Claude Code](https://claude.com/claude-code)")
+                self.pr_url = out.strip().splitlines()[-1]
+                self.log(step, f"PR {self.pr_url}")
+            ci = gates.ci_green(self.pr, self.cfg, self.repo)
+            self.log(step, f"CI {'green' if ci else 'red/timeout'}")
+            diff = git(self.repo, "diff", f"{self.base}...HEAD")
+            rev = self.session("reviewer", step, {"spec": spec, "diff": diff,
+                                                  "ci": "green" if ci else "RED or timed out"}, attempt)
+            approved, body = parse_verdict(rev.text)
+            self.log(step, "review APPROVE" if approved else f"review red: {body.splitlines()[0][:120]}")
+            if approved and ci:
+                break
+            red = 0 if approved else red + 1
+            if red >= self.cfg["consecutive_red_reviews_stop"]:
+                raise Stop(f"{red} consecutive red reviews")
+            defects = (body if not approved else "") + ("" if ci else "\nCI is red on the PR (gh pr checks).")
+        else:
+            raise Stop(f"{self.cfg['attempts_per_step']} implementer attempts without APPROVE + green CI")
+
+        if step.touches_gpu:
+            if not gates.wait_comfy_idle(self.cfg):
+                raise Stop(f"ComfyUI busy for {self.cfg['comfy_wait_s']}s; GPU test not run")
+            ok, n, tail = gates.gpu_test(self.cfg, self.repo)
+            self.log(step, f"GPU test {n}/4 · {'pass' if ok else 'FAIL'}")
+            if not ok:
+                raise Stop(f"real-generation test {n}/4 (< {self.cfg['gpu_min_pass']}/4):\n{tail}")
+
+        hits = gates.touched_never_economize(self.cfg, self.repo, self.base)
+        if step.lane != "ordinary" or hits:
+            _, _, err = gh(self.cfg, self.repo, "pr", "edit", self.pr, "--add-label", "needs-nimrod", check=False)
+            why = f"lane={step.lane}" if step.lane != "ordinary" else "diff touches never-economize " + ", ".join(hits)
+            raise Stop(f"needs-nimrod: PR-ready, not auto-merged ({why})")
+
+        # 04 queue flip + STATE ride on the PR branch (ruling 10a), then CI again, then merge.
+        queue.mark_done(step.id, self.pr_url, self.repo / PLAN)
+        nxt = queue.next_step(self.repo / PLAN)
+        (self.repo / "docs" / "STATE.md").write_text(
+            f"Main at {base_hash} + {step.id} ({self.pr_url}) · phase {self.cfg.get('phase', '?')} · "
+            f"last merged {step.id} · next {nxt.id if nxt else 'queue empty'} · carried {self.carried()}\n",
+            encoding="utf-8")
+        self.commit([PLAN.as_posix(), "docs/STATE.md"], "queue + state", step)
+        self.push(branch)
+        if not gates.ci_green(self.pr, self.cfg, self.repo):
+            raise Stop("CI red after the queue/state commit")
+        gh(self.cfg, self.repo, "pr", "merge", self.pr, "--squash", "--delete-branch")
+        git(self.repo, "checkout", "-q", self.base)
+        git(self.repo, "pull", "-q", "--ff-only", "origin", self.base)
+        rc, tail = self.pytest()
+        if rc != 0:
+            raise Stop(f"suite red on {self.base} after merge: {tail}")
+        self.log(step, f"merged {self.pr_url} · suite on {self.base}: {tail.splitlines()[-1] if tail else 'ok'}")
+
+    def carried(self) -> str:
+        _, out, _ = gh(self.cfg, self.repo, "issue", "list", "--state", "open", "--search",
+                       '"loop: needs-nimrod" in:title', "--json", "title", check=False)
+        try:
+            titles = [i["title"].rsplit(" ", 1)[-1] for i in json.loads(out or "[]")]
+        except (ValueError, KeyError, TypeError):
+            return "unknown"
+        return ", ".join(titles) or "none"
+
+    def stop(self, step, reason: str) -> None:
+        """State line to the log, then open or append issue `loop: needs-nimrod <id>`."""
+        self.log(step, f"STOP · {reason}")
+        title = f"loop: needs-nimrod {step.id}"
+        body = (f"Step `{step.id}` — {step.title} — stopped.\n\n**Reason:** {reason}\n\n"
+                f"PR: {self.pr_url or 'none'} · log: `loop/runs/{step.id}/log.md` on the PC.")
+        try:
+            _, out, _ = gh(self.cfg, self.repo, "issue", "list", "--state", "open", "--search",
+                           f'"{title}" in:title', "--json", "number,title", check=False)
+            same = [i for i in json.loads(out or "[]") if i.get("title") == title]
+            if same:
+                gh(self.cfg, self.repo, "issue", "comment", str(same[0]["number"]), "--body", body)
+                self.log(step, f"issue #{same[0]['number']} appended")
+                return
+            rc, out, err = gh(self.cfg, self.repo, "issue", "create", "--title", title, "--body", body,
+                              "--label", "needs-nimrod", check=False)
+            if rc != 0:  # label missing (06 §9 setup) → open it unlabelled and say so
+                self.log(step, f"issue with label failed ({err.strip()[:120]}); retrying without label")
+                _, out, _ = gh(self.cfg, self.repo, "issue", "create", "--title", title, "--body", body)
+            self.log(step, f"issue {out.strip()}")
+        except Exception as e:  # the stop itself must not crash the loop's exit path
+            self.log(step, f"could not open issue: {e}")
+
+
+def run_loop(cfg: dict, repo, runs_dir, once: bool = False) -> int:
+    """0 = merged (or queue empty); 1 = stopped for Nimrod."""
+    d = Driver(cfg, repo, runs_dir)
+    while True:
+        step = queue.next_step(Path(repo) / PLAN)
+        if step is None:
+            print("queue empty")
+            return 0
+        try:
+            d.run_step(step)
+        except Stop as e:
+            d.stop(step, str(e))
+            return 1
+        except Exception as e:
+            d.stop(step, f"error: {type(e).__name__}: {e}")
+            return 1
+        if once:
+            return 0
+
+
+def dry_run(cfg: dict, once: bool) -> int:
+    """Run on a temp clone of the current HEAD (as `main`) whose origin is a temp bare repo, with
+    fake claude, fake gh and a stub GPU test. Nothing leaves the machine; logs land in
+    loop/runs/_dryrun/<stamp>/."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    runs_dir = LOOP / "runs" / "_dryrun" / stamp
+    runs_dir.mkdir(parents=True)
+    tmp = Path(tempfile.mkdtemp(prefix="loop-dryrun-"))
+    bare, work = tmp / "origin.git", tmp / "work"
+    head = git(ROOT, "rev-parse", "HEAD").strip()
+    run(["git", "clone", "-q", "--bare", str(ROOT), str(bare)], tmp)
+    git(bare, "update-ref", "refs/heads/main", head)
+    run(["git", "clone", "-q", "--branch", "main", str(bare), str(work)], tmp)
+    origin = git(work, "remote", "get-url", "origin").strip()
+    if Path(origin).resolve() != bare.resolve():
+        raise SystemExit(f"dry-run refused: clone origin is {origin}, not the temp bare repo")
+    os.environ.setdefault("FAKE_CLAUDE_LOG", str(runs_dir / "claude-calls.jsonl"))
+    os.environ.setdefault("FAKE_GH_LOG", str(runs_dir / "gh-calls.jsonl"))
+    py = sys.executable
+    cfg = dict(cfg,
+               claude_cmd=os.environ.get("LOOP_CLAUDE_CMD") or [py, str(LOOP / "fake_claude.py")],
+               gh_cmd=os.environ.get("LOOP_GH_CMD") or [py, str(LOOP / "fake_gh.py")],
+               pytest_cmd=[py, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
+               gpu_cmd=[py, "-c", "print('4/4 passed. (dry-run stub for local/run_batch.py)')"],
+               ci_poll_s=1, comfy_wait_s=min(cfg["comfy_wait_s"], 60))
+    print(f"dry-run: HEAD {head[:7]} as main · clone {work} · origin {bare} · logs {runs_dir}")
+    rc = run_loop(cfg, work, runs_dir, once)
+    print(f"dry-run: exit {rc}")
+    return rc
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--dry-run", action="store_true", help="temp clone, fake claude/gh, no remote writes")
+    ap.add_argument("--once", action="store_true", help="run at most one step")
+    a = ap.parse_args(argv)
+    cfg = config.load_config()
+    if a.dry_run:
+        return dry_run(cfg, a.once)
+    return run_loop(cfg, ROOT, LOOP / "runs", a.once)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
