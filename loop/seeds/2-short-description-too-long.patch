@@ -1,0 +1,13 @@
+diff --git a/README.md b/README.md
+index 81f15cd..2819a7f 100644
+--- a/README.md
++++ b/README.md
+@@ -9,7 +9,7 @@ python_version: 3.11
+ app_file: app.py
+ pinned: false
+ license: mit
+-short_description: Aesthetic QR codes that actually scan
++short_description: Aesthetic QR codes that actually scan (SD1.5 + QR Code Monster v2)
+ ---
+ 
+ # QR Art Forge

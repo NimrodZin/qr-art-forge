@@ -1,0 +1,13 @@
+diff --git a/validator.py b/validator.py
+index a689bb7..acb7535 100644
+--- a/validator.py
++++ b/validator.py
+@@ -85,7 +85,7 @@ def validate(pil_img: Image.Image, expected: str) -> dict:
+     img = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+     results = {}
+     for name, variant in _conditions(img).items():
+-        results[name] = {"zx": _phone_decode(variant, expected),
++        results[name] = {"zx": _decode_cv(variant) == expected,
+                          "cv": _decode_cv(variant) == expected}
+     score = sum(r["zx"] for r in results.values())
+     return {"pass": score == len(results), "score": score, "max": len(results),

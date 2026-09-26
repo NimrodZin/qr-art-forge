@@ -1,0 +1,13 @@
+diff --git a/README.md b/README.md
+index 81f15cd..eaa18bb 100644
+--- a/README.md
++++ b/README.md
+@@ -4,7 +4,7 @@ emoji: 🌸
+ colorFrom: gray
+ colorTo: pink
+ sdk: gradio
+-sdk_version: 5.50.0
++sdk_version: 5.49.1
+ python_version: 3.11
+ app_file: app.py
+ pinned: false

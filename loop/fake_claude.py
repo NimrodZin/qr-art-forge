@@ -47,7 +47,7 @@ def main():
             f.write(f"\n{marker}\n")
         body = f"Appended the marker to {dest.as_posix()}."
     else:
-        body = "1. Fake defect: app.py:1 does not do the thing." \
+        body = f"1. Fake defect: {target}:1 does not do the thing." \
             if os.environ.get("FAKE_REVIEW") == "defects" else "APPROVE"
 
     text = ("" if os.environ.get("FAKE_NO_HEADER") else header + "\n") + body + HANDOVER

@@ -1,0 +1,13 @@
+diff --git a/app.py b/app.py
+index 6ee07f2..f68e43e 100644
+--- a/app.py
++++ b/app.py
+@@ -33,7 +33,7 @@ _pipes: dict | None = None
+ def make_scheduler(config: dict):
+     from diffusers import DPMSolverMultistepScheduler
+     return DPMSolverMultistepScheduler.from_config(
+-        config, use_karras_sigmas=True, algorithm_type="dpmsolver++")
++        config, use_karras_sigmas=True)
+ 
+ 
+ def _load_pipes() -> dict:
