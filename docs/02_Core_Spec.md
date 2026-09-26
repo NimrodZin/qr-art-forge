@@ -35,3 +35,4 @@ No image reaches the gallery without `validate(image, payload)["pass"] == True` 
 - v0.2 (2026-09-23) — zxing gates, OpenCV advisory; all conditions softened; three conditions. Provenance: run 1382759530, 4/4 rejects read on iPhone and Android while scoring ≤3/8 under v0.1; every one had zx-soft ✓ (Nimrod, this date).
 - v0.2.1 (2026-09-23) — clarified σ basis. Provenance: M1.6 handover, Not certain 2.
 - v0.3 (2026-09-24) — phone-like decode: 3 binarizers × 3 softening levels, any-hit. Provenance: run 55795690, 7/7 rejects read on phone, 7/7 pass v0.3 on all conditions, negatives fail (planner measurement, zxing-cpp 2.2.0).
+- v0.3.1 (2026-09-26) — gallery serves PNG so displayed pixels are the validated pixels. Provenance: local/REPORT-local.md §5.

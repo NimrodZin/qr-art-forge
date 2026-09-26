@@ -188,7 +188,7 @@ def build_ui() -> gr.Blocks:
                 go = gr.Button("Forge", variant="primary")
                 gr.Markdown("Failed generations may be stored privately to improve quality.")
             with gr.Column(scale=2):
-                gallery = gr.Gallery(label="Scannable results", columns=2, height=560)
+                gallery = gr.Gallery(label="Scannable results", columns=2, height=560, format="png")
                 report = gr.Textbox(label="Scan report", lines=8)
                 ctrl = gr.Image(label="Control image used", height=200)
         go.click(forge, [payload, prompt, batch, weight, steps, cfg, rescue, seed],
