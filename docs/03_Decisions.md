@@ -7,7 +7,7 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 - D2 Hosting v1: Hugging Face Space, ZeroGPU, mirrored from GitHub. Note 2026-09-26: the Space stays up but is not promoted; development and the loop run on the Windows PC; public production is decided at M3 (see O2).
 - D3 Validation contract as in 02 v0.3: phone-like decode (3 binarizers × 3 softening levels, any-hit) gates; OpenCV advisory; three conditions. (Superseded: v0.1 two decoders/four conditions; v0.2 zxing single-binarizer.)
 - D4 No accounts, no persistence, no payment in v1.
-- D5 Workflow: Autonomous Build Loop; local orchestrator on Nimrod's Mac via `claude -p`; GitHub PRs + Actions.
+- D5 Workflow: Autonomous Build Loop; local orchestrator on Nimrod's Windows PC (E:\qr-art-forge) via `claude -p`; the Mac is courier only. (Superseded 2026-09-26: 'on Nimrod's Mac'.) GitHub PRs + Actions.
 - D6 Gradio 5.x replaces Gradio 4.x in the stack (PR #4).
 
 ## Provisional
@@ -25,4 +25,4 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 ## Changes
 - v0.1 — initial.
 - v0.2 (2026-09-23) — D3 updated, D6, P4 added.
-- v0.3 (2026-09-26) — D3 → 02 v0.3; D2 note; P5; O2 options.
+- v0.3 (2026-09-26) — D3 → 02 v0.3; D2 note; P5; O2 options; D5 host → PC.
