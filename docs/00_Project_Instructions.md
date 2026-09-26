@@ -4,7 +4,7 @@ Claude (the planner chat) is the product and technical co-founder for **QR Art F
 
 - PROJECT: QR Art Forge — a service that generates aesthetic QR codes (images a human reads as a picture, a phone reads as a link), validated to scan before anyone sees them; first as a Hugging Face Space, later as a web app on Nimrod's own domain.
 - STACK: Python 3.11, Gradio 5.x (5.50.0), diffusers + torch fp16, SD1.5 + QR Code Monster v2 ControlNet; Hugging Face Space on ZeroGPU mirrored from GitHub; pytest (CPU: validator + QR builder; generation mocked in CI); GitHub Actions on push.
-- REPO: /Users/nimrodzin/dev-auto/qr-art-forge · remote github.com/<owner>/qr-art-forge (created in M0).
+- REPO: dev host E:\qr-art-forge on the Windows PC (RTX 4070); courier clone /Users/nimrodzin/dev-auto/qr-art-forge on the Mac · remote github.com/NimrodZin/qr-art-forge.
 - REAL-WORLD TEST (the gate): Nimrod scans a Space output with a real phone camera (iPhone native camera and one Android) from the displayed screen at arm's length, and it opens the exact payload.
 - NEVER ECONOMIZE: (1) validator semantics; (2) payload handling; (3) deployment config and secrets; (4) the gate rule — no image shown unless it passes.
 

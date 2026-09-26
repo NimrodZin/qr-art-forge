@@ -14,6 +14,8 @@ payload — the exact string encoded · control image — the grey-canvas QR fed
 - `tests/` — pytest; CPU only; generation is mocked.
 - `docs/` — the contract.
 - `README.md` — Space front-matter (deploy config). NEVER ECONOMIZE.
+- `local/` — git-ignored PC-only tooling (launch.bat, run_batch.py, comfy_state.py); see local/REPORT-local.md.
+- `docs/06_Loop_Spec.md` — the automated loop; sessions started by the orchestrator obey it.
 
 ## Read-only for implementers
 `docs/`, `tests/`, `validator.py` semantics. An implementer that needs a change there stops and reports.
