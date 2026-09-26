@@ -85,3 +85,25 @@ def test_ui_intro_states_three_conditions():
     texts = [b.value for b in demo.blocks.values() if isinstance(b, gr.Markdown)]
     assert any("Every result shown has been read by a phone-grade decoder under three scan "
                "conditions." in t for t in texts)
+
+
+def _gallery(demo):
+    import gradio as gr
+    (g,) = [b for b in demo.blocks.values() if isinstance(b, gr.Gallery)]
+    return g
+
+
+def test_gallery_serves_png():
+    assert _gallery(app.build_ui()).format == "png"
+
+
+def test_served_pixels_are_validated_pixels(tmp_path):
+    import numpy as np
+    pipes = {"gen": lambda *a, **k: [GOOD], "rescue": lambda *a, **k: BAD}
+    surv, *_ = app.run_forge(PAY, "p", 1, 1.35, 25, 7, False, 1, pipes=pipes)
+    assert len(surv) == 1 and app.validate(surv[0][0], "https://" + PAY)["pass"]
+    g = _gallery(app.build_ui())
+    g.GRADIO_CACHE = str(tmp_path)  # encode exactly as Gradio will when serving the gallery
+    (served,) = g.postprocess(surv).root
+    decoded = np.array(Image.open(served.image.path).convert("RGB"))
+    assert np.array_equal(decoded, np.array(surv[0][0].convert("RGB")))
