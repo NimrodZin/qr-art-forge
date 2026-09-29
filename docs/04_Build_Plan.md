@@ -28,6 +28,6 @@ The never-economize list is never downgraded.
 - 2026-09-25 local env on RTX 4070 (local/REPORT-local.md): peony 64/64 over 16 batches, ~21 s headless; fisherman 9/12; finding → M2.1 (merged 9e5662f).
 
 ## Queue
-- [ ] m2-6 · Negative prompt field under Advanced (OD 9) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=no
+- [x] m2-6 · Negative prompt field under Advanced (OD 9) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=no · https://github.com/NimrodZin/qr-art-forge/pull/19
 - [ ] m2-5 · Bleed canvas — 768×1024 control image, code centred, model paints beyond it (OD 6.1); needs 02 v0.4 approval · class=top · lane=never-economize · paths=qrbuild.py,app.py,tests/ · touches_gpu=yes
 - [ ] m2-7 · VAE slicing on CUDA behind env flag, default off (P5) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes
