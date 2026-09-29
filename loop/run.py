@@ -5,6 +5,8 @@
 Per step: Architect → Tester (red on main) → [Implementer → CI → Reviewer] × attempts →
 GPU test if touches_gpu → merge (ordinary lane, APPROVE, CI green, no never-economize path)
 or stop PR-ready with needs-nimrod. Any stop opens/appends issue `loop: needs-nimrod <id>`.
+A role may stop instead (06 §1): line 2 `BLOCKED: <reason>`, or for the Architect a non-empty
+'Blocking questions' section; the step stops there and the reply goes into the issue.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ if __name__ == "__main__":  # import the package from the repo root; loop/queue.
 import argparse
 import datetime
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -30,7 +33,11 @@ SKIP = ("__pycache__/", ".pytest_cache/")
 
 
 class Stop(Exception):
-    """A stop condition (06 §5): the loop pauses and asks Nimrod."""
+    """A stop condition (06 §5): the loop pauses and asks Nimrod. `detail` (markdown) goes into the issue."""
+
+    def __init__(self, reason: str, detail: str = ""):
+        super().__init__(reason)
+        self.detail = detail
 
 
 def within(path: str, allowed: list[str]) -> bool:
@@ -44,6 +51,45 @@ def parse_verdict(text: str) -> tuple[bool, str]:
     if body and body[0].strip().strip("*`").strip() == "APPROVE":
         return True, ""
     return False, "\n".join(body) or "(reviewer gave no verdict)"
+
+
+STATUS_BLOCKED = re.compile(r"^[#*_>\s]*status\s*:\s*[*_]*\s*blocked\b", re.I)
+QUESTIONS = re.compile(r"^(#*)[*_\s]*(?:\d+\.\s*)?[*_]*blocking questions\b[*_:\s]*(.*)$", re.I)
+HEADING = re.compile(r"^(#{1,6})\s")
+
+
+def blocking(spec: str) -> str:
+    """The Architect's block (06 §1): a line `Status: BLOCKED`, or a 'Blocking questions' section
+    whose text is anything other than `None`. Returns what blocks, or "" if nothing does."""
+    lines = spec.split("## Handover")[0].splitlines()
+    found = [l.strip() for l in lines if STATUS_BLOCKED.match(l)]
+    for i, line in enumerate(lines):
+        m = QUESTIONS.match(line)
+        if not m:
+            continue
+        level = len(m[1]) or 6        # the section ends at the next heading of its level or above
+        body = [m[2]] if m[2].strip() else []
+        if not body:
+            for l in lines[i + 1:]:
+                h = HEADING.match(l)
+                if h and len(h[1]) <= level:
+                    break
+                body.append(l)
+        text = "\n".join(body).strip()
+        if text.strip("*_. ").lower() not in ("", "none"):
+            found += [line.strip(), text]
+        break
+    return "\n\n".join(found)
+
+
+def excerpt(text: str, n: int = 20) -> str:
+    lines = text.strip().splitlines()
+    more = f"\n… ({len(lines) - n} more lines)" if len(lines) > n else ""
+    return "\n".join(lines[:n]) + more
+
+
+def quoted(title: str, text: str) -> str:
+    return f"**{title}:**\n\n" + "\n".join("> " + l for l in text.splitlines())
 
 
 class Driver:
@@ -105,9 +151,13 @@ class Driver:
         self.check_budget()
         r = session.run_role(role, step, extra, self.cfg, self.repo, self.runs, attempt)
         self.log(step, f"{role} #{attempt} · {r.duration_s:.0f}s · {r.cost_usd:.2f} USD · "
-                       f"{'ERROR ' + r.error if r.is_error else 'ok'}")
+                       f"{'ERROR ' + r.error if r.is_error else 'BLOCKED' if r.blocked else 'ok'}")
+        where = f"\n\nFull reply: `loop/runs/{step.id}/{role}-{attempt}.json` on the PC."
         if r.is_error:
-            raise Stop(f"{role} session error: {r.error}")
+            raise Stop(f"{role} session error: {r.error}",
+                       quoted("Reply (first 20 lines)", excerpt(r.text)) + where if r.text.strip() else "")
+        if r.blocked:
+            raise Stop(f"{role} blocked", quoted("Reply (first 20 lines)", excerpt(r.text)) + where)
         return r
 
     # -- the step ------------------------------------------------------------------------
@@ -126,10 +176,16 @@ class Driver:
         branch = f"loop/{step.id}"
         if git(self.repo, "branch", "--list", branch).strip():
             raise Stop(f"branch {branch} already exists (earlier run?)")
-        git(self.repo, "checkout", "-q", "-b", branch)
 
+        # The Architect is read-only, so it runs on the base branch; a blocked spec leaves no branch.
         spec = self.session("architect", step, {}).text
         self.expect_changes(step, "architect", [])
+        questions = blocking(spec)
+        if questions:
+            (self.runs / step.id / "spec-blocked.md").write_text(spec.rstrip() + "\n", encoding="utf-8")
+            raise Stop("architect blocked", quoted("Blocking questions", questions) +
+                       f"\n\nFull spec: `loop/runs/{step.id}/spec-blocked.md` on the PC.")
+        git(self.repo, "checkout", "-q", "-b", branch)
         spec_file = f"steps/{step.id}/spec.md"
         (self.repo / spec_file).parent.mkdir(parents=True, exist_ok=True)
         (self.repo / spec_file).write_text(spec.rstrip() + "\n", encoding="utf-8")
@@ -224,11 +280,12 @@ class Driver:
             return "unknown"
         return ", ".join(titles) or "none"
 
-    def stop(self, step, reason: str) -> None:
+    def stop(self, step, reason: str, detail: str = "") -> None:
         """State line to the log, then open or append issue `loop: needs-nimrod <id>`."""
         self.log(step, f"STOP · {reason}")
         title = f"loop: needs-nimrod {step.id}"
         body = (f"Step `{step.id}` — {step.title} — stopped.\n\n**Reason:** {reason}\n\n"
+                + (f"{detail}\n\n" if detail else "") +
                 f"PR: {self.pr_url or 'none'} · log: `loop/runs/{step.id}/log.md` on the PC.")
         try:
             _, out, _ = gh(self.cfg, self.repo, "issue", "list", "--state", "open", "--search",
@@ -259,7 +316,7 @@ def run_loop(cfg: dict, repo, runs_dir, once: bool = False) -> int:
         try:
             d.run_step(step)
         except Stop as e:
-            d.stop(step, str(e))
+            d.stop(step, str(e), e.detail)
             return 1
         except Exception as e:
             d.stop(step, f"error: {type(e).__name__}: {e}")

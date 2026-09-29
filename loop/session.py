@@ -42,6 +42,7 @@ class Result:
     is_error: bool
     duration_s: float
     error: str = ""
+    blocked: bool = False       # the role stopped to report: line 2 is `BLOCKED: <reason>` (06 §1)
 
 
 def role_class(role: str, step) -> str:
@@ -82,6 +83,12 @@ def has_header(text: str, cls: str, step_id: str) -> bool:
     return bool(word(cls) and word(step_id))
 
 
+def is_blocked(text: str) -> bool:
+    """The first non-blank line after the header starts with `BLOCKED:`."""
+    body = [l for l in text.strip().splitlines()[1:] if l.strip()]
+    return bool(body) and body[0].strip("#*`> ").startswith("BLOCKED:")
+
+
 def run_role(role: str, step, extra_context: dict, cfg: dict, repo, runs_dir, attempt: int = 1) -> Result:
     prompt = render(role, step, extra_context)
     argv = build_argv(role, step, cfg)
@@ -104,7 +111,8 @@ def run_role(role: str, step, extra_context: dict, cfg: dict, repo, runs_dir, at
         error = f"session error (exit {rc}, {data.get('subtype')}): {text[:300] or stderr.strip()[:300]}"
     if not error and not has_header(text, role_class(role, step), step.id):
         error = f"missing header line (expected '{header(role, step)}')"
-    res = Result(text, cost, data.get("session_id"), bool(error), time.monotonic() - t0, error)
+    res = Result(text, cost, data.get("session_id"), bool(error), time.monotonic() - t0, error,
+                 blocked=not error and is_blocked(text))
     out = Path(runs_dir) / step.id
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{role}-{attempt}.json").write_text(json.dumps({

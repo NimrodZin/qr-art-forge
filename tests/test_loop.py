@@ -80,7 +80,8 @@ def repo(tmp_path):
 def cfg(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.jsonl"))
     monkeypatch.setenv("FAKE_GH_LOG", str(tmp_path / "gh.jsonl"))
-    for var in ("FAKE_REVIEW", "FAKE_NO_HEADER", "FAKE_TESTER_GREEN", "FAKE_IMPL_ESCAPE", "FAKE_GH_CHECKS"):
+    for var in ("FAKE_REVIEW", "FAKE_NO_HEADER", "FAKE_TESTER_GREEN", "FAKE_IMPL_ESCAPE", "FAKE_GH_CHECKS",
+                "FAKE_ARCH_BLOCKED", "FAKE_ROLE_BLOCKED"):
         monkeypatch.delenv(var, raising=False)
     c = L("config").load_config()
     c.update(claude_cmd=[sys.executable, FAKE_CLAUDE], gh_cmd=[sys.executable, FAKE_GH],
@@ -133,8 +134,10 @@ def test_queue_rejects_bad_class(tmp_path):
 
 def test_real_build_plan_queue_parses():
     steps = L("queue").parse_queue((ROOT / "docs" / "04_Build_Plan.md").read_text(encoding="utf-8"))
-    assert [s.id for s in steps][:3] == ["m2-5", "m2-6", "m2-7"]
-    assert steps[0].paths == ["qrbuild.py", "app.py", "tests/"] and steps[0].touches_gpu
+    assert [s.id for s in steps][:3] == ["m2-6", "m2-5", "m2-7"]
+    assert steps[0].paths == ["app.py", "tests/"] and not steps[0].touches_gpu
+    assert (steps[0].cls, steps[0].lane) == ("scoped", "ordinary")          # the pilot (06 §7)
+    assert (steps[1].cls, steps[1].lane) == ("top", "never-economize")      # bleed canvas, issue #15
 
 
 # (b) session ----------------------------------------------------------------------------
@@ -204,6 +207,57 @@ def test_session_rejects_missing_header(cfg, repo, tmp_path, monkeypatch):
     assert r.is_error and "header" in r.error
 
 
+def test_session_marks_blocked_reply_without_error(cfg, repo, tmp_path, monkeypatch):
+    s = L("session")
+    work = repo()
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs")
+    assert not r.is_error and r.blocked is False
+    monkeypatch.setenv("FAKE_ROLE_BLOCKED", "reviewer")
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs", 2)
+    assert not r.is_error and r.blocked is True
+    assert r.text.splitlines()[1] == "BLOCKED: fake reason"
+
+
+def test_every_prompt_tells_the_role_how_to_stop():
+    for role in ("architect", "tester", "implementer", "reviewer"):
+        text = (ROOT / "loop" / "prompts" / f"{role}.md").read_text(encoding="utf-8")
+        assert "Your FINAL message must begin with the header line, even if you stop to report a problem." in text
+        assert "To stop, write line 2 as `BLOCKED: <reason>`." in text
+
+
+# (b2) blocking-section parse ----------------------------------------------------------------
+
+@pytest.mark.parametrize("spec", [
+    "Class: top · Step: t-1\n## Scope\nx\n\n## 5. Blocking questions\nNone\n\n## Handover\n- Not certain: y",
+    "Class: top · Step: t-1\n## Scope\nx\n\n5. Blocking questions: None",
+    "Class: top · Step: t-1\n## Scope\nx\n\n**Blocking questions:** None.",
+    "Class: top · Step: t-1\n## Scope\nNo blocking questions arise here.\n\n## Blocking questions\n\n*None*\n",
+    "Class: top · Step: t-1\n## Scope\nx",
+])
+def test_blocking_questions_none_is_not_blocked(spec):
+    assert L("run").blocking(spec) == ""
+
+
+def test_blocking_questions_section_is_returned():
+    spec = ("Class: top · Step: t-1\n## Scope\nx\n\n## 5. Blocking questions\n\n"
+            "**B1: this step changes docs/02.** Options: A, B.\n\n**Recommendation: A.**\n\n"
+            "## Handover\n- Not certain: None\n")
+    got = L("run").blocking(spec)
+    assert "B1: this step changes docs/02." in got and "Recommendation: A." in got
+    assert "Handover" not in got and "Not certain" not in got
+
+
+def test_status_blocked_line_blocks():
+    spec = "Class: top · Step: t-1\n\n**Status: BLOCKED. See §5.**\n\n## Scope\nx\n\n## Blocking questions\nNone\n"
+    assert "Status: BLOCKED" in L("run").blocking(spec)
+
+
+def test_excerpt_is_first_twenty_lines():
+    text = "\n".join(f"line {i}" for i in range(30))
+    got = L("run").excerpt(text)
+    assert "line 0" in got and "line 19" in got and "line 20" not in got
+
+
 # (c)–(f) driver ---------------------------------------------------------------------------
 
 def test_driver_merges_ordinary_step_on_approve_and_green_ci(cfg, repo, tmp_path):
@@ -256,10 +310,11 @@ def test_driver_stops_when_budget_exceeded(cfg, repo, tmp_path):
     prev = tmp_path / "runs" / "t-0"
     prev.mkdir(parents=True)
     today = datetime.date.today().isoformat()
-    (prev / "implementer-1.json").write_text(json.dumps({"date": today, "cost_usd": 14.0}))
+    ceiling = cfg["daily_cost_ceiling_usd"]
+    (prev / "implementer-1.json").write_text(json.dumps({"date": today, "cost_usd": ceiling - 1.0}))
     (prev / "reviewer-1.json").write_text(json.dumps({"date": today, "cost_usd": 1.5}))
     (prev / "old-1.json").write_text(json.dumps({"date": "2000-01-01", "cost_usd": 99.0}))
-    assert L("gates").budget_ok(cfg, tmp_path / "runs") == (False, pytest.approx(15.5))
+    assert L("gates").budget_ok(cfg, tmp_path / "runs") == (False, pytest.approx(ceiling + 0.5))
     assert drive(cfg, work, tmp_path) == 1
     assert calls(tmp_path, "claude.jsonl") == []
     assert "budget" in log_text(tmp_path)
@@ -280,6 +335,60 @@ def test_driver_stops_when_implementer_writes_tests(cfg, repo, tmp_path, monkeyp
     work = repo()
     assert drive(cfg, work, tmp_path) == 1
     assert "outside its paths" in log_text(tmp_path)
+
+
+def _issue_body(tmp_path):
+    create = [c["argv"] for c in calls(tmp_path, "gh.jsonl") if c["argv"][:2] == ["issue", "create"]]
+    assert create, "no needs-nimrod issue opened"
+    return _flag(create[0], "--body")
+
+
+def test_driver_stops_before_tester_when_architect_blocks(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_ARCH_BLOCKED", "1")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert [c["role"] for c in calls(tmp_path, "claude.jsonl")] == ["architect"]
+    body = _issue_body(tmp_path)
+    assert "architect blocked" in body
+    assert "B1: fake question touching docs/02. Options: A or B. Recommendation: A." in body
+    log = log_text(tmp_path)
+    assert "architect blocked" in log and "session error" not in log
+    assert "B1: fake question" in (tmp_path / "runs" / "t-1" / "spec-blocked.md").read_text(encoding="utf-8")
+    # nothing committed: the repo is back on a clean main with no loop branch, so a rerun can start
+    assert sh(work, "git", "branch", "--show-current").strip() == "main"
+    assert sh(work, "git", "status", "--porcelain").strip() == ""
+    assert sh(work, "git", "branch", "--list", "loop/t-1").strip() == ""
+
+
+def test_driver_proceeds_when_blocking_questions_none(cfg, repo, tmp_path):
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 0
+    assert [c["role"] for c in calls(tmp_path, "claude.jsonl")] == ["architect", "tester", "implementer", "reviewer"]
+    assert "Blocking questions: None" in sh(work, "git", "show", "loop/t-1:steps/t-1/spec.md")
+    assert "blocked" not in log_text(tmp_path)
+
+
+def test_driver_stops_when_tester_blocks(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_ROLE_BLOCKED", "tester")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert [c["role"] for c in calls(tmp_path, "claude.jsonl")] == ["architect", "tester"]
+    log = log_text(tmp_path)
+    assert "STOP · tester blocked" in log and "session error" not in log
+    body = _issue_body(tmp_path)
+    assert "**Reason:** tester blocked" in body and "session error" not in body
+    assert "BLOCKED: fake reason" in body
+    assert "The fake role stopped to report instead of doing its task." in body
+
+
+def test_driver_session_error_issue_carries_reply_excerpt(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_NO_HEADER", "1")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert "architect session error: missing header" in log_text(tmp_path)
+    body = _issue_body(tmp_path)
+    assert "session error" in body
+    assert "Fake spec for t-1" in body and "Blocking questions: None" in body
 
 
 def test_driver_runs_gpu_test_for_gpu_steps(cfg, repo, tmp_path):

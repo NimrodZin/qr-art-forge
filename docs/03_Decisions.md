@@ -1,4 +1,4 @@
-# 03 — Decisions v0.3 (2026-09-26)
+# 03 — Decisions v0.4 (2026-09-29)
 
 Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidence) · Provisional (built on; flagged when a task exposes a reason to revisit) · Open (never silently resolved; a dependent task names it and takes the smallest hedge) · Superseded (kept, with pointer).
 
@@ -13,7 +13,7 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 ## Provisional
 - P1 Rescue policy: single img2img pass at strength 0.35.
 - P2 Default QR strength (ControlNet conditioning scale) 1.35.
-- P3 768 px output.
+- P3 768 px wide output; 768 × 1024 once the bleed canvas lands (Nimrod, issue #15, 'C, a').
 - P4 Owner-only reject archive to a private HF dataset (M1.5); disclosure line in UI. Nimrod: keep (chat 2026-09-23).
 - P5 VAE slicing on CUDA (≤ 2/255 pixel change; validator runs on final pixels). Off by default until the loop measures pass rate with it on. Provenance: local/REPORT-local.md §4.
 
@@ -26,3 +26,4 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 - v0.1 — initial.
 - v0.2 (2026-09-23) — D3 updated, D6, P4 added.
 - v0.3 (2026-09-26) — D3 → 02 v0.3; D2 note; P5; O2 options; D5 host → PC.
+- v0.4 (2026-09-29) — P3: 768 × 1024 with the bleed canvas. Provenance: Nimrod on issue #15, 'C, a' (https://github.com/NimrodZin/qr-art-forge/issues/15#issuecomment-5888012097).

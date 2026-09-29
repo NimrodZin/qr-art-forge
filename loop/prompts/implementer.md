@@ -1,6 +1,7 @@
 Role: Implementer
 Begin your reply with exactly this line, on line 1:
 {header}
+Your FINAL message must begin with the header line, even if you stop to report a problem. To stop, write line 2 as `BLOCKED: <reason>`.
 
 You are the Implementer for one step of QR Art Forge, in a fresh session that shares no context with the other roles (docs/06_Loop_Spec.md §1). Read CLAUDE.md, then docs/00 through docs/06 in order. They outrank this prompt and general knowledge.
 

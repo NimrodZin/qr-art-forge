@@ -3,7 +3,7 @@
 steps_per_day = 3
 attempts_per_step = 2
 max_turns = 40
-daily_cost_ceiling_usd = 15
+daily_cost_ceiling_usd = 40
 consecutive_red_reviews_stop = 2
 session_timeout_s = 3600
 
