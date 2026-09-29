@@ -1,4 +1,4 @@
-# 06 — Loop Spec v0.2 (2026-09-26)
+# 06 — Loop Spec v0.3 (2026-09-29)
 
 The automated build loop for QR Art Forge. Runs on Nimrod's Windows PC (RTX 4070) in `E:\qr-art-forge`, on his Claude subscription, via `claude -p`; the Mac is courier only. GitHub for PRs and CI. Nothing here overrides 00–05; where they conflict, 00–05 win.
 
@@ -13,6 +13,8 @@ One **step** = one queue item from `docs/04` (or an Open Discussion entry promot
 | Implementer | per class in spec | spec + failing tests | code; never touches `tests/`, `docs/`, `steps/` | editable paths in spec |
 | Reviewer | top | spec + `git diff main` | `approve` or numbered defects | nothing |
 | Merger | none (script) | reviewer verdict + CI | squash-merge, delete branch, rerun suite on main, state line | main |
+
+A role may stop and report instead of doing its task. Its final message then starts with the header and line 2 `BLOCKED: <reason>`. The driver stops the step and puts the reply in the needs-nimrod issue. The Architect blocks by writing a non-empty 'Blocking questions' section; the driver stops before the Tester.
 
 ### 1a. Real-generation test
 `local\run_batch.py --seed 12345` (peony, defaults) must report ≥ 50 % pass. Runs on the PC only; marked `@pytest.mark.gpu` and skipped in CI. Before any GPU test the session checks `local\comfy_state.py`; if ComfyUI is busy it waits, and VRAM contention is a stop, not a retry.
@@ -63,7 +65,7 @@ Plus mutation testing on `validator.py` and `qrbuild.py`: ≥ 90 % of mutants ki
 
 ## 7. Pilot
 
-Step: **OD #6 (1) bleed canvas** — 768×1024 control image, code centred, model paints freely beyond it; ordinary lane; scoped class. Success: loop runs Architect→Merger without Nimrod; PR carries a screenshot; the M2 gate (phone) follows.
+Step: **m2-6 negative prompt field** — ordinary lane, scoped class, no contract change. Success: loop runs Architect→Merger without Nimrod. (Changed 2026-09-29 from the bleed canvas, which needs a 02 change: Nimrod on issue #15, 'C, a'.)
 
 ## 8. State line
 
@@ -76,3 +78,4 @@ After every merge the orchestrator writes `docs/STATE.md`: `Main at <hash> · ph
 ## Changes
 - v0.1 (2026-09-24) — initial draft.
 - v0.2 (2026-09-26) — host = Windows PC; real-generation test; ComfyUI-idle guard; calibration defect 8. Approved by Nimrod in chat 2026-09-26.
+- v0.3 (2026-09-29) — pilot = m2-6; BLOCKED handling (§1). Provenance: issue #15.

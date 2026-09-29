@@ -3,7 +3,9 @@ acts out the role in cwd, prints claude-shaped JSON.
 
 Env: FAKE_CLAUDE_LOG (append one JSON line per call) · FAKE_REVIEW=defects · FAKE_NO_HEADER=1 ·
 FAKE_TESTER_GREEN=1 (tests pass before implementation) · FAKE_IMPL_ESCAPE=1 (implementer edits
-tests/) · FAKE_COST (default 0.01).
+tests/) · FAKE_ARCH_BLOCKED=1 (spec with a non-empty Blocking questions section) ·
+FAKE_ROLE_BLOCKED=<role> (that role replies header + `BLOCKED: fake reason`, does nothing) ·
+FAKE_COST (default 0.01).
 """
 import json
 import os
@@ -33,8 +35,12 @@ def main():
     marker = f"# loopfake {step_id}"
     safe_id = re.sub(r"\W", "_", step_id)
     test_file = Path("tests") / f"test_loopfake_{safe_id}.py"
-    if role == "architect":
-        body = f"## Scope\nFake spec for {step_id}: append `{marker}` to {target}."
+    if os.environ.get("FAKE_ROLE_BLOCKED") == role:
+        body = "BLOCKED: fake reason\n\nThe fake role stopped to report instead of doing its task."
+    elif role == "architect":
+        questions = "## 5. Blocking questions\nB1: fake question touching docs/02. Options: A or B. " \
+            "Recommendation: A." if os.environ.get("FAKE_ARCH_BLOCKED") else "5. Blocking questions: None"
+        body = f"## Scope\nFake spec for {step_id}: append `{marker}` to {target}.\n\n{questions}"
     elif role == "tester":
         test_file.parent.mkdir(exist_ok=True)
         check = "True" if os.environ.get("FAKE_TESTER_GREEN") else \
