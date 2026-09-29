@@ -1,4 +1,4 @@
-# 06 — Loop Spec v0.3 (2026-09-29)
+# 06 — Loop Spec v0.4 (2026-09-29)
 
 The automated build loop for QR Art Forge. Runs on Nimrod's Windows PC (RTX 4070) in `E:\qr-art-forge`, on his Claude subscription, via `claude -p`; the Mac is courier only. GitHub for PRs and CI. Nothing here overrides 00–05; where they conflict, 00–05 win.
 
@@ -21,7 +21,7 @@ The driver verifies each session's model from the JSON `modelUsage`; the header 
 ### 1a. Real-generation test
 `local\run_batch.py --seed 12345` (peony, defaults) must report ≥ 50 % pass. Runs on the PC only; marked `@pytest.mark.gpu` and skipped in CI. Before any GPU test the session checks `local\comfy_state.py`; if ComfyUI is busy it waits, and VRAM contention is a stop, not a retry.
 
-Defects go back to a **new** Implementer session with the defect list appended. Max 2 implementer attempts per step; then the step stops PR-ready with `needs-nimrod`.
+Defects go back to a **new** Implementer session with the defect list appended. Max 2 implementer attempts per step; then the step stops PR-ready with `needs-nimrod`. Suite after commit; red → defects, no push.
 
 Sessions run with `--output-format json --max-turns <cap> --model <class> --allowedTools` limited to the role (Reviewer: read-only tools; Tester/Implementer: read, edit, bash for `pytest` and `git`). No session runs `git push`, `gh pr merge`, or anything touching Space secrets; the orchestrator does those.
 
@@ -46,7 +46,7 @@ The Architect names the lane in the spec; the orchestrator refuses to auto-merge
 ## 4. Where Nimrod is
 
 - **Decisions inbox**: GitHub issues labelled `needs-nimrod`, body = options + recommendation, answerable in one word. Anything touching `docs/02`, secrets, or persisted data blocks the step; UI wording proceeds on a default and is flagged in the PR body.
-- **Approve by seeing**: any PR touching `build_ui` attaches a screenshot of the Space (orchestrator renders the Gradio app locally and captures it).
+- **Approve by seeing**: any PR touching UI strings is flagged in its body and labelled `ui-change`; Nimrod approves by seeing after merge. Screenshots: OD 11.
 - **Approve by using**: milestone gates only (phone scan). Steps inside a milestone don't wait for it.
 - **Always Nimrod's**: money, accounts, secrets, naming, legal/UI disclosure text, destructive actions on real data, the Space's hardware.
 
@@ -57,7 +57,7 @@ The Architect names the lane in the spec; the orchestrator refuses to auto-merge
 - Pinned versions: sessions run in the repo's `.venv` from `requirements-ci.txt`; CI uses the same file.
 - Provenance: any `docs/` change must cite `file:line` or a quoted decision of Nimrod's (issue/PR comment URL); the Reviewer rejects otherwise.
 - No secrets in git; the orchestrator holds `HF_TOKEN` only in the shell environment.
-- Every session begins with its task class and step id on line one (CLAUDE.md rule); the orchestrator checks it.
+- The header line is advisory; the orchestrator verifies the model from `modelUsage` (§1).
 
 ## 6. Reviewer calibration (before never-economize auto-merge)
 
@@ -82,3 +82,4 @@ After every merge the orchestrator writes `docs/STATE.md`: `Main at <hash> · ph
 - v0.2 (2026-09-26) — host = Windows PC; real-generation test; ComfyUI-idle guard; calibration defect 8. Approved by Nimrod in chat 2026-09-26.
 - v0.3 (2026-09-29) — pilot = m2-6; BLOCKED handling (§1). Provenance: issue #15.
 - v0.3.1 (2026-09-29) — model verified from modelUsage; header advisory; 40 USD. Provenance: loop runs m2-5 tester-1 and m2-6 implementer-1 (good sessions stopped on header).
+- v0.4 (2026-09-29) — suite after commit; CI log to Implementer; no-change stop; UI flag; seeds as exact edits. Provenance: loop run m2-6, PR #19.

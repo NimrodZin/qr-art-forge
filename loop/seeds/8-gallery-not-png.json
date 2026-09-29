@@ -1,0 +1,6 @@
+{
+ "file": "app.py",
+ "old": ", format=\"png\")",
+ "new": ")",
+ "defect": "The gallery re-encodes validated pixels: format=\"png\" dropped (M2.1; 02 v0.3.1)."
+}

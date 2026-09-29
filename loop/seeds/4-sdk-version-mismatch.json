@@ -1,0 +1,6 @@
+{
+ "file": "README.md",
+ "old": "5.50.0",
+ "new": "5.49.1",
+ "defect": "README `sdk_version` no longer matches the gradio pin in requirements (M1.2)."
+}

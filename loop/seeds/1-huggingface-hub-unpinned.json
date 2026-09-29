@@ -1,0 +1,6 @@
+{
+ "file": "requirements-ci.txt",
+ "old": "transformers==4.44.2\n",
+ "new": "transformers==4.44.2\nhuggingface_hub\n",
+ "defect": "Unpinned `huggingface_hub` (M0): a runtime dependency added with no version pin."
+}

@@ -2,9 +2,11 @@
 
     python loop/run.py [--dry-run] [--once]
 
-Per step: Architect → Tester (red on main) → [Implementer → CI → Reviewer] × attempts →
+Per step: Architect → Tester (red on main) → [Implementer → commit → suite (red: tail to the next
+attempt, no push) → push/PR → CI (red: failed log to the next attempt) → Reviewer] × attempts →
 GPU test if touches_gpu → merge (ordinary lane, APPROVE, CI green, no never-economize path)
-or stop PR-ready with needs-nimrod. Any stop opens/appends issue `loop: needs-nimrod <id>`.
+or stop PR-ready with needs-nimrod. An implementer that changes nothing stops the step. UI strings
+in app.py flag the PR (body section + label `ui-change`). Any stop opens/appends issue `loop: needs-nimrod <id>`.
 A role may stop instead (06 §1): `BLOCKED: <reason>` first (after the header, if given), or for the
 Architect a non-empty 'Blocking questions' section; the step stops there and the reply goes into the issue.
 A session's model is verified from its JSON modelUsage; the header line is advisory.
@@ -98,6 +100,7 @@ class Driver:
         self.cfg, self.repo, self.runs = cfg, Path(repo), Path(runs_dir)
         self.base = cfg.get("base_branch", "main")
         self.pr_url = None
+        self.ui: list[str] = []
 
     # -- bookkeeping ---------------------------------------------------------------------
     def log(self, step, msg: str) -> None:
@@ -143,9 +146,46 @@ class Driver:
     def pr(self) -> str:
         return self.pr_url.rstrip("/").rsplit("/", 1)[-1]
 
-    def pytest(self, *args) -> tuple[int, str]:
+    def pytest(self, *args, lines: int = 3) -> tuple[int, str]:
         rc, out, err = run([*self.cfg["pytest_cmd"], *args], self.repo, self.cfg, check=False, timeout=1800)
-        return rc, "\n".join((out + err).strip().splitlines()[-3:])
+        return rc, gates.tail(out + err, lines)
+
+    def suite(self, lines: int = 3) -> tuple[int, str]:
+        """The full suite as CI runs it (06 §1a: gpu tests are the orchestrator's, not the suite's)."""
+        return self.pytest("-m", "not gpu", lines=lines)
+
+    def publish(self, step, branch: str, spec_file: str) -> None:
+        """Push; open the PR on the first push. UI strings in app.py (06 §4) go into the body under
+        'UI change — approve by seeing' and put label `ui-change` on the PR; neither stops the step."""
+        self.push(branch)
+        ui = gates.ui_strings(self.repo, self.base)
+        body = (f"Loop step `{step.id}` (class {step.cls}, lane {step.lane}).\n\n"
+                f"Spec: `{spec_file}`. Log: `loop/runs/{step.id}/log.md` on the PC.\n\n")
+        if ui:
+            body += ("## UI change — approve by seeing\n"
+                     "This PR adds or changes UI strings in `app.py`. Nimrod approves by seeing after merge "
+                     "(docs/06 §4).\n\n```text\n" + "\n".join(ui) + "\n```\n\n")
+        body += "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+        if not self.pr_url:
+            _, out, _ = gh(self.cfg, self.repo, "pr", "create", "--base", self.base, "--head", branch,
+                           "--title", f"{step.id}: {step.title}", "--body", body)
+            self.pr_url = out.strip().splitlines()[-1]
+            self.log(step, f"PR {self.pr_url}")
+        elif ui != self.ui:
+            gh(self.cfg, self.repo, "pr", "edit", self.pr, "--body", body, check=False)
+        if ui and ui != self.ui:
+            self.label_ui(step, ui)
+        self.ui = ui
+
+    def label_ui(self, step, ui: list[str]) -> None:
+        add = ("pr", "edit", self.pr, "--add-label", "ui-change")
+        rc, _, err = gh(self.cfg, self.repo, *add, check=False)
+        if rc != 0:  # label missing on the repo → create it, then add again
+            gh(self.cfg, self.repo, "label", "create", "ui-change", "--color", "FBCA04",
+               "--description", "UI strings changed: approve by seeing (docs/06 §4)", check=False)
+            rc, _, err = gh(self.cfg, self.repo, *add, check=False)
+        self.log(step, f"UI change: {len(ui)} line(s) in app.py · " +
+                 ("labelled ui-change" if rc == 0 else f"label ui-change failed ({err.strip()[:120]})"))
 
     # -- sessions ------------------------------------------------------------------------
     def session(self, role: str, step, extra: dict, attempt: int = 1):
@@ -171,7 +211,7 @@ class Driver:
             raise Stop(f"repo not on a clean {self.base}")
 
     def run_step(self, step) -> None:
-        self.pr_url = None
+        self.pr_url, self.ui = None, []
         self.preflight(step)
         self.log(step, f"step start · {step.title} · class={step.cls} lane={step.lane} gpu={step.touches_gpu}")
         base_hash = git(self.repo, "rev-parse", "--short", "HEAD").strip()
@@ -193,11 +233,12 @@ class Driver:
         (self.repo / spec_file).write_text(spec.rstrip() + "\n", encoding="utf-8")
         self.commit([spec_file], "spec", step)
 
-        self.session("tester", step, {"spec": spec})
+        tester = self.session("tester", step, {"spec": spec})
         tests = self.expect_changes(step, "tester", ["tests/"])
         pyfiles = [t for t in tests if t.endswith(".py") and (self.repo / t).exists()]
         if not pyfiles:
-            raise Stop("tester wrote no test files")
+            raise Stop("tester wrote no test files", quoted("Reply (first 20 lines)", excerpt(tester.text)) +
+                       f"\n\nFull reply: `loop/runs/{step.id}/tester-1.json` on the PC.")
         rc, tail = self.pytest(*pyfiles)
         self.log(step, f"tests on main + spec: exit {rc} · {tail.splitlines()[-1] if tail else ''}")
         if rc == 0:
@@ -209,23 +250,23 @@ class Driver:
         impl_paths = [p for p in step.paths if not within(p, ["tests/", "docs/", "steps/"])]
         defects, red = "", 0
         for attempt in range(1, self.cfg["attempts_per_step"] + 1):
-            self.session("implementer", step, {"spec": spec, "defects": defects}, attempt)
+            impl = self.session("implementer", step, {"spec": spec, "defects": defects}, attempt)
             changed = self.expect_changes(step, "implementer", impl_paths)
-            if changed:
-                self.commit(changed, f"implementation (attempt {attempt})", step)
-            else:
-                self.log(step, "implementer changed nothing")
-            self.push(branch)
-            if not self.pr_url:
-                _, out, _ = gh(self.cfg, self.repo, "pr", "create", "--base", self.base, "--head", branch,
-                               "--title", f"{step.id}: {step.title}", "--body",
-                               f"Loop step `{step.id}` (class {step.cls}, lane {step.lane}).\n\n"
-                               f"Spec: `{spec_file}`. Log: `loop/runs/{step.id}/log.md` on the PC.\n\n"
-                               "🤖 Generated with [Claude Code](https://claude.com/claude-code)")
-                self.pr_url = out.strip().splitlines()[-1]
-                self.log(step, f"PR {self.pr_url}")
+            if not changed:
+                raise Stop("implementer made no change", quoted("Reply (first 20 lines)", excerpt(impl.text)) +
+                           f"\n\nFull reply: `loop/runs/{step.id}/implementer-{attempt}.json` on the PC.")
+            self.commit(changed, f"implementation (attempt {attempt})", step)
+            rc, tail = self.suite(lines=60)
+            if rc != 0:  # red before push: the tail is the next attempt's defect list; no CI, no review
+                self.log(step, f"suite red after commit (exit {rc}) · {tail.splitlines()[-1] if tail else ''}")
+                defects = ("The full suite (`pytest -q -m \"not gpu\"`) is red after your change. "
+                           f"Last 60 lines:\n\n```text\n{tail}\n```")
+                continue
+            self.log(step, f"suite green after commit · {tail.splitlines()[-1] if tail else ''}")
+            self.publish(step, branch, spec_file)
             ci = gates.ci_green(self.pr, self.cfg, self.repo)
             self.log(step, f"CI {'green' if ci else 'red/timeout'}")
+            ci_log = "" if ci else gates.ci_failed_log(branch, self.cfg, self.repo, 60)
             diff = git(self.repo, "diff", f"{self.base}...HEAD")
             rev = self.session("reviewer", step, {"spec": spec, "diff": diff,
                                                   "ci": "green" if ci else "RED or timed out"}, attempt)
@@ -236,7 +277,9 @@ class Driver:
             red = 0 if approved else red + 1
             if red >= self.cfg["consecutive_red_reviews_stop"]:
                 raise Stop(f"{red} consecutive red reviews")
-            defects = (body if not approved else "") + ("" if ci else "\nCI is red on the PR (gh pr checks).")
+            defects = (body if not approved else "") + ("" if ci else
+                "\n\nCI is red on the PR. Last 60 lines of `gh run view --log-failed` for the latest run on "
+                f"`{branch}`:\n\n```text\n{ci_log}\n```")
         else:
             raise Stop(f"{self.cfg['attempts_per_step']} implementer attempts without APPROVE + green CI")
 
@@ -268,7 +311,7 @@ class Driver:
         gh(self.cfg, self.repo, "pr", "merge", self.pr, "--squash", "--delete-branch")
         git(self.repo, "checkout", "-q", self.base)
         git(self.repo, "pull", "-q", "--ff-only", "origin", self.base)
-        rc, tail = self.pytest()
+        rc, tail = self.suite()
         if rc != 0:
             raise Stop(f"suite red on {self.base} after merge: {tail}")
         self.log(step, f"merged {self.pr_url} · suite on {self.base}: {tail.splitlines()[-1] if tail else 'ok'}")

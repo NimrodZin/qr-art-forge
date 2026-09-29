@@ -1,5 +1,5 @@
 """Gates the driver checks before and after sessions: ComfyUI idle, GPU test, never-economize
-diff, CI, budget."""
+diff, UI strings, CI (and its failed log), budget."""
 from __future__ import annotations
 
 import datetime
@@ -13,6 +13,12 @@ from pathlib import Path
 from loop.sh import gh, git, run
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", re.M)
+UI_FILE = "app.py"
+UI_STRING = re.compile(r"label=|placeholder=|gr\.Markdown\(")
+
+
+def tail(text: str, n: int) -> str:
+    return "\n".join(text.strip().splitlines()[-n:])
 
 
 def comfy_idle(url: str, timeout: float = 3.0) -> bool:
@@ -71,6 +77,25 @@ def touched_never_economize(cfg: dict, repo, base: str | None = None) -> list[st
         if changed or near:
             hits.append(f"{gf} ({marker})")
     return sorted(hits)
+
+
+def ui_strings(repo, base: str) -> list[str]:
+    """Lines the branch adds or changes in app.py that carry UI text (06 §4: approve by seeing)."""
+    diff = git(repo, "diff", "-U0", f"{base}...HEAD", "--", UI_FILE)
+    return [l[1:].strip() for l in diff.splitlines()
+            if l.startswith("+") and not l.startswith("+++") and UI_STRING.search(l)]
+
+
+def ci_failed_log(branch: str, cfg: dict, repo=".", n: int = 60) -> str:
+    """Last n lines of `gh run view <latest run on branch> --log-failed`."""
+    _, out, err = gh(cfg, repo, "run", "list", "--branch", branch, "--limit", "1", "--json", "databaseId",
+                     check=False)
+    try:
+        run_id = json.loads(out or "[]")[0]["databaseId"]
+    except (ValueError, IndexError, KeyError, TypeError):
+        return f"(no CI run found for {branch}: {err.strip()[:200] or out.strip()[:200]})"
+    _, out, err = gh(cfg, repo, "run", "view", str(run_id), "--log-failed", check=False)
+    return tail(out + err, n) or f"(run {run_id}: no failed-step log)"
 
 
 def ci_green(pr, cfg: dict, repo=".") -> bool:

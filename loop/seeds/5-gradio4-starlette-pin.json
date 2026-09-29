@@ -1,0 +1,6 @@
+{
+ "file": "requirements.txt",
+ "old": "5.50.0",
+ "new": "4.44.1",
+ "defect": "gradio 4.44.1 against the pinned starlette: the starlette/gradio 4 mismatch (M1.3)."
+}

@@ -1,9 +1,0 @@
-diff --git a/requirements-ci.txt b/requirements-ci.txt
-index d125292..7dd277a 100644
---- a/requirements-ci.txt
-+++ b/requirements-ci.txt
-@@ -9,3 +9,4 @@ Pillow==10.4.0
- torch==2.4.1
- diffusers==0.30.3
- transformers==4.44.2
-+huggingface_hub

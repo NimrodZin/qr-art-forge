@@ -1,0 +1,14 @@
+[
+ {
+  "file": "requirements-ci.txt",
+  "old": "5.50.0",
+  "new": "4.44.0",
+  "defect": "gradio 4.44.0 with pydantic unpinned: the gradio/pydantic incompatibility (M1.2); CI half."
+ },
+ {
+  "file": "requirements.txt",
+  "old": "5.50.0",
+  "new": "4.44.0",
+  "defect": "gradio 4.44.0 with pydantic unpinned: the gradio/pydantic incompatibility (M1.2); Space half."
+ }
+]

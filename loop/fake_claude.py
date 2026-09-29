@@ -6,6 +6,9 @@ FAKE_TESTER_GREEN=1 (tests pass before implementation) · FAKE_IMPL_ESCAPE=1 (im
 tests/) · FAKE_ARCH_BLOCKED=1 (spec with a non-empty Blocking questions section) ·
 FAKE_ROLE_BLOCKED=<role> (that role replies header + `BLOCKED: fake reason`, does nothing) ·
 FAKE_MODEL=<id>[,<id>…] (modelUsage reports these instead of the --model argument) ·
+FAKE_TESTER_NONE=1 (tester writes nothing) · FAKE_IMPL_NOOP=1 (implementer changes nothing) ·
+FAKE_IMPL_RED=first|always (implementer's edit leaves the suite red on its first / every attempt) ·
+FAKE_IMPL_UI=1 (implementer also adds app.py lines with label=, placeholder=, gr.Markdown() ·
 FAKE_COST (default 0.01).
 """
 import json
@@ -42,6 +45,10 @@ def main():
         questions = "## 5. Blocking questions\nB1: fake question touching docs/02. Options: A or B. " \
             "Recommendation: A." if os.environ.get("FAKE_ARCH_BLOCKED") else "5. Blocking questions: None"
         body = f"## Scope\nFake spec for {step_id}: append `{marker}` to {target}.\n\n{questions}"
+    elif role == "tester" and os.environ.get("FAKE_TESTER_NONE"):
+        body = "The fake tester wrote no tests: nothing in the spec is testable."
+    elif role == "implementer" and os.environ.get("FAKE_IMPL_NOOP"):
+        body = "Nothing to change: the fake implementer found the work already done."
     elif role == "tester":
         test_file.parent.mkdir(exist_ok=True)
         check = "True" if os.environ.get("FAKE_TESTER_GREEN") else \
@@ -50,8 +57,13 @@ def main():
         body = "Tests written; red on main."
     elif role == "implementer":
         dest = test_file if os.environ.get("FAKE_IMPL_ESCAPE") else Path(target)
+        first = re.search(r"^Defects from .*\n\(none\)$", prompt, re.M) is not None
+        red = os.environ.get("FAKE_IMPL_RED")
+        line = f"# loopfake-broken {step_id}" if red == "always" or (red == "first" and first) else marker
+        if os.environ.get("FAKE_IMPL_UI"):
+            line += '\nbox = gr.Textbox(label="Fake label", placeholder="fake hint")\ngr.Markdown("Fake UI note")'
         with open(dest, "a", encoding="utf-8") as f:
-            f.write(f"\n{marker}\n")
+            f.write(f"\n{line}\n")
         body = f"Appended the marker to {dest.as_posix()}."
     else:
         body = f"1. Fake defect: {target}:1 does not do the thing." \
