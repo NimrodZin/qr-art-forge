@@ -50,15 +50,15 @@ def _load_pipes() -> dict:
     pipe.to(device)
     i2i.to(device)
 
-    def gen(prompt, control, n, weight, steps, cfg, seed):
+    def gen(prompt, control, n, weight, steps, cfg, seed, negative=NEG):
         gens = [torch.Generator(device).manual_seed(seed + i) for i in range(n)]
-        return pipe(prompt=prompt, negative_prompt=NEG, image=control,
+        return pipe(prompt=prompt, negative_prompt=negative, image=control,
                     num_images_per_prompt=n, controlnet_conditioning_scale=weight,
                     num_inference_steps=steps, guidance_scale=cfg, generator=gens,
                     width=SIZE, height=SIZE).images
 
-    def rescue(prompt, image, control, weight, steps, cfg, seed):
-        return i2i(prompt=prompt, negative_prompt=NEG, image=image, control_image=control,
+    def rescue(prompt, image, control, weight, steps, cfg, seed, negative=NEG):
+        return i2i(prompt=prompt, negative_prompt=negative, image=image, control_image=control,
                    strength=0.35, controlnet_conditioning_scale=min(2.0, weight + 0.5),
                    num_inference_steps=max(12, steps // 2), guidance_scale=cfg,
                    generator=torch.Generator(device).manual_seed(seed)).images[0]
@@ -116,17 +116,26 @@ def archive_rejects(records: list[tuple[str, bytes, dict]]) -> str:
 
 
 # ---------------------------------------------------------------- core loop
+def build_negative(extra: str | None) -> str:
+    """Pure: user negative text appended to the fixed default (OD 9)."""
+    if extra is None or not extra.strip():
+        return NEG
+    return NEG + ", " + extra.strip()
+
+
 def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: int,
               cfg: float, rescue: bool, seed: int, pipes: dict | None = None,
-              progress: Callable | None = None):
+              progress: Callable | None = None, negative: str = ""):
     """Pure function: returns (survivors, report, control). Gate rule lives here."""
     pipes = pipes or get_pipes()
     payload, warn = normalize_payload(payload_raw)
     control = make_qr(payload)
     seed = int(seed) if seed >= 0 else random.randint(0, 2**31 - 1)
+    neg = build_negative(negative)
     if progress:
         progress(0.05, desc="Generating batch")
-    imgs = pipes["gen"](prompt, control, int(batch), float(weight), int(steps), float(cfg), seed)
+    imgs = pipes["gen"](prompt, control, int(batch), float(weight), int(steps), float(cfg), seed,
+                        negative=neg)
 
     survivors, report, rejects = [], [], []
     for i, im in enumerate(imgs):
@@ -137,7 +146,8 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
         if not v["pass"]:
             rejects.append((f"seed{seed+i}", im, v))
         if not v["pass"] and rescue and v["score"] >= 1:
-            im2 = pipes["rescue"](prompt, im, control, float(weight), int(steps), float(cfg), seed + i)
+            im2 = pipes["rescue"](prompt, im, control, float(weight), int(steps), float(cfg), seed + i,
+                                  negative=neg)
             v2 = validate(im2, payload)
             tag += " → rescue " + summary_line(v2)
             if v2["pass"]:
@@ -159,9 +169,10 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
 
 
 @GPU(duration=120)
-def forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, progress=gr.Progress()):
+def forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative="", progress=gr.Progress()):
     try:
-        return run_forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, progress=progress)
+        return run_forge(payload, prompt, batch, weight, steps, cfg, rescue, seed,
+                         progress=progress, negative=negative)
     except PayloadError as e:
         raise gr.Error(str(e))
 
@@ -183,6 +194,8 @@ def build_ui() -> gr.Blocks:
                                        label="QR strength (higher = scans easier, looks more like a code)")
                     steps = gr.Slider(15, 40, value=25, step=1, label="Steps")
                     cfg = gr.Slider(4, 12, value=7, step=0.5, label="Guidance (CFG)")
+                    negative_box = gr.Textbox(label="Negative prompt (added to the built-in list)",
+                                              lines=2, value="", placeholder="e.g. people, hands, red")
                     rescue = gr.Checkbox(value=True, label="Rescue near-misses")
                     seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
                 go = gr.Button("Forge", variant="primary")
@@ -191,7 +204,7 @@ def build_ui() -> gr.Blocks:
                 gallery = gr.Gallery(label="Scannable results", columns=2, height=560, format="png")
                 report = gr.Textbox(label="Scan report", lines=8)
                 ctrl = gr.Image(label="Control image used", height=200)
-        go.click(forge, [payload, prompt, batch, weight, steps, cfg, rescue, seed],
+        go.click(forge, [payload, prompt, batch, weight, steps, cfg, rescue, seed, negative_box],
                  [gallery, report, ctrl])
         gr.Markdown("**Tips** — keep payloads short; subjects with strong light/dark structure hide the "
                     "code best; if nothing passes, raise QR strength by 0.2 and retry.")
