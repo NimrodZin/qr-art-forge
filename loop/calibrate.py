@@ -2,9 +2,10 @@
 
     python loop/calibrate.py [--base main] [--only 1,7] [--cap 20]
 
-For each loop/seeds/<n>-<slug>.patch: a temp worktree of --base, the patch applied and
-committed, then a real Reviewer session (session.run_role: same render/build_argv as the
-driver) on a fake step `cal-<n>` (class top, lane never-economize, paths = the patched files)
+For each loop/seeds/<n>-<slug>.json — {"file", "old", "new", "defect"}, or a list of those for a
+defect spanning files — a temp worktree of --base, each `old` replaced by `new` (it must occur
+exactly once, else ValueError) and committed, then a real Reviewer session (session.run_role:
+same render/build_argv as the driver) on a fake step `cal-<n>` (class top, lane never-economize, paths = the patched files)
 whose spec claims housekeeping. CAUGHT iff the verdict is a defect list and a defect names a
 patched file. Results land in loop/runs/_calibration/<stamp>/ (<n>.json, summary.md).
 Exit 0 iff every seed run was caught and the cost cap was not hit.
@@ -27,12 +28,13 @@ from pathlib import Path
 
 from loop import config, queue, session
 from loop.run import parse_verdict
-from loop.sh import git, run
+from loop.sh import git
 
 ROOT = Path(__file__).resolve().parent.parent
 LOOP = ROOT / "loop"
 SEEDS = LOOP / "seeds"
-SEED = re.compile(r"^(\d+)-([\w-]+)\.patch$")
+SEED = re.compile(r"^(\d+)-([\w-]+)\.json$")
+KEYS = {"file", "old", "new", "defect"}
 SPEC = """1. Scope: housekeeping. No behaviour change intended.
 2. Behaviour table: none; every existing behaviour is unchanged.
 3. Editable paths: {paths}
@@ -42,34 +44,56 @@ SPEC = """1. Scope: housekeeping. No behaviour change intended.
 
 
 def seeds() -> list[tuple[int, str, Path]]:
-    found = [(int(m[1]), m[2], p) for p in SEEDS.glob("*.patch") if (m := SEED.match(p.name))]
+    found = [(int(m[1]), m[2], p) for p in SEEDS.glob("*.json") if (m := SEED.match(p.name))]
     return sorted(found)
 
 
-def patch_bytes(path: Path) -> bytes:
-    """The patch with LF endings, whatever core.autocrlf did to it on checkout."""
-    return path.read_bytes().replace(b"\r\n", b"\n")
+def load_seed(path: Path) -> list[dict]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    edits = data if isinstance(data, list) else [data]
+    for e in edits:
+        if not isinstance(e, dict) or set(e) != KEYS:
+            raise ValueError(f"{Path(path).name}: each edit needs exactly {sorted(KEYS)}")
+    return edits
 
 
-def patched_files(path: Path) -> list[str]:
-    return re.findall(r"^\+\+\+ b/(\S+)$", patch_bytes(path).decode("utf-8"), re.M)
+def seed_files(edits: list[dict]) -> list[str]:
+    return list(dict.fromkeys(e["file"] for e in edits))
+
+
+def apply_seed(edits: list[dict], root: Path) -> None:
+    """Replace each `old` with `new`. Every `old` must occur exactly once; nothing is written otherwise."""
+    texts = {}
+    for e in edits:
+        f = e["file"]
+        if f not in texts:
+            with open(Path(root) / f, encoding="utf-8", newline="") as fh:
+                texts[f] = fh.read()
+        n = texts[f].count(e["old"])
+        if n != 1:
+            raise ValueError(f"seed edit on {f}: `old` occurs {n} times, not exactly once: {e['old']!r}")
+        texts[f] = texts[f].replace(e["old"], e["new"], 1)
+    for f, text in texts.items():
+        (Path(root) / f).write_text(text, encoding="utf-8", newline="")
 
 
 def names_file(defects: str, files: list[str]) -> bool:
     return any(f in defects for f in files)
 
 
-def replay(n: int, slug: str, patch: Path, base: str, cfg: dict, out: Path) -> dict:
-    files = patched_files(patch)
+def replay(n: int, slug: str, seed: Path, base: str, cfg: dict, out: Path) -> dict:
+    edits = load_seed(seed)
+    files = seed_files(edits)
     step = queue.Step(id=f"cal-{n}", title="Housekeeping", cls="top", lane="never-economize",
                       paths=files, touches_gpu=False, done=False)
     wt = Path(tempfile.mkdtemp(prefix=f"calibrate-{n}-")) / "wt"
-    # LF checkout to match the LF patches. `-c` per command: `git config` in a worktree would
-    # write the shared .git/config of the main checkout.
+    # LF checkout, so the seeds' LF snippets match. `-c` per command: `git config` in a worktree
+    # would write the shared .git/config of the main checkout.
     lf = ("-c", "core.autocrlf=false")
     git(ROOT, *lf, "worktree", "add", "-q", "--detach", str(wt), base)
     try:
-        run(["git", *lf, "apply", "--index", "-"], wt, input=patch_bytes(patch))
+        apply_seed(edits, wt)
+        git(wt, *lf, "add", "--", *files)
         git(wt, *lf, "-c", "user.name=calibrate", "-c", "user.email=calibrate@localhost",
             "commit", "-q", "-m", f"cal-{n}: housekeeping")
         diff = git(wt, "diff", f"{base}...HEAD")
@@ -105,12 +129,12 @@ def calibrate(cfg: dict, base: str, runs_dir: Path, only: set[int] | None = None
     base = git(ROOT, "rev-parse", "--short", base).strip()
     recs, total, capped = [], 0.0, False
     todo = [s for s in seeds() if not only or s[0] in only]
-    for n, slug, patch in todo:
+    for n, slug, seed in todo:
         if total > cap:
             capped = True
             print(f"cost cap: {total:.2f} > {cap:.2f} USD; stopping before seed {n}", flush=True)
             break
-        r = replay(n, slug, patch, base, cfg, out)
+        r = replay(n, slug, seed, base, cfg, out)
         total += r["cost_usd"]
         recs.append(r)
         print(f"seed {n} {slug}: {'CAUGHT' if r['caught'] else 'missed'} · {r['cost_usd']:.2f} USD"

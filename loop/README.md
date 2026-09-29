@@ -10,7 +10,11 @@ Exit 0 means a step merged or the queue is empty. Exit 1 means the loop stopped;
 Before the first real run, 06 §9 setup must be done: `gh auth`, the `needs-nimrod` label (issues open unlabelled until it exists), and `claude` logged in.
 
 ## Flow per step
-Architect (spec) → Tester (tests must be red on main) → [Implementer → push/PR → CI → Reviewer] × 2 → GPU test if `touches_gpu=yes` (after ComfyUI is idle) → merge only if `lane=ordinary`, APPROVE, CI green and no never-economize path is touched.
+Architect (spec) → Tester (tests must be red on main) → [Implementer → commit → full suite → push/PR → CI → Reviewer] × 2 → GPU test if `touches_gpu=yes` (after ComfyUI is idle) → merge only if `lane=ordinary`, APPROVE, CI green and no never-economize path is touched.
+- Suite after commit: `pytest -q -m "not gpu"` runs after each implementation commit, before any push. Red → its last 60 lines are the next attempt's defects; no push, no CI wait, no Reviewer that attempt.
+- CI red → the last 60 lines of `gh run view <latest run on the branch> --log-failed` go into the next attempt's defects (with the Reviewer's, if any).
+- An Implementer that changes nothing stops the step (`implementer made no change`); no push, no review. A Tester that writes no test file stops it too; both issues carry the reply excerpt.
+- UI flag: added or changed `app.py` lines containing `label=`, `placeholder=` or `gr.Markdown(` are listed in the PR body under "UI change — approve by seeing", and the PR gets label `ui-change` (created if missing). Neither stops the step or affects auto-merge.
 If it merges: the queue flip + `docs/STATE.md` are committed on the PR branch, CI runs again, then squash-merge and `pytest` on main.
 If it doesn't: the PR is labelled `needs-nimrod` and the loop stops.
 A role may stop and report instead (06 §1): its reply starts with `BLOCKED: <reason>` (after the header, if given). The Architect blocks by writing anything other than `None` under "Blocking questions" (or a `Status: BLOCKED` line). The Architect runs on `main`, so a blocked spec leaves no branch behind. The spec is saved to `runs/<id>/spec-blocked.md`, and the loop stops before the Tester. Every stop's issue carries the reason plus the blocking text or the first 20 lines of the reply (session errors too).
@@ -30,3 +34,6 @@ The driver commits, pushes and calls `gh`; sessions never do. After each session
 ## Logs
 `loop/runs/<id>/log.md` gets one line per stage. `loop/runs/<id>/<role>-<attempt>.json` holds the prompt, argv, raw JSON and cost. Dry-runs log to `loop/runs/_dryrun/<stamp>/`. `runs/` is git-ignored.
 `LOOP_CLAUDE_CMD` and `LOOP_GH_CMD` override the commands; tests use `fake_claude.py` and `fake_gh.py`.
+
+## Calibration seeds
+`seeds/<n>-<slug>.json` is one exact edit `{"file", "old", "new", "defect"}` (or a list of them, for seed 3, which spans two requirements files). `calibrate.py` replaces `old` with `new`; `old` must occur exactly once in the file on the base, else it is an error. `tests/test_calibrate.py` checks every `old` against HEAD. Small snippets keep unrelated steps from breaking a seed (a `.patch` breaks on any change in its diff context, as in the m2-6 pilot); a step that changes the seeded snippet itself still turns the suite red.

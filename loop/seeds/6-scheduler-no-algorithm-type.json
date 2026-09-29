@@ -1,0 +1,6 @@
+{
+ "file": "app.py",
+ "old": ", algorithm_type=\"dpmsolver++\")",
+ "new": ")",
+ "defect": "DPMSolver scheduler built from the DreamShaper config without algorithm_type: its `deis` config breaks (M1.4)."
+}

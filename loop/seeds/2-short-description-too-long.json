@@ -1,0 +1,6 @@
+{
+ "file": "README.md",
+ "old": "actually scan",
+ "new": "actually scan (SD1.5 + QR Code Monster v2)",
+ "defect": "README `short_description` longer than the Hub's 60-character limit (M1.1)."
+}
