@@ -10,7 +10,7 @@ Space created and mirrored; first batch generated. Gate: 3/3 phone scans. Exit a
 
 ## M2 — Quality loop (automated)
 Tune P1/P2 from measured pass rates; UI polish behind "Advanced"; resolve O1. Gate: phone scan on a fresh batch + Brief criterion 3.
-Steps: M2.1 gallery PNG (done) · M2.3 orchestrator (loop/) · M2.4 calibration (docs/07) · M2.5 pilot: OD 6(1) bleed canvas · then OD 8 IP-Adapter, OD 9 negative prompt, P5.
+Steps: M2.1 gallery PNG (done) · M2.3 orchestrator (loop/) · M2.4 calibration (docs/07) · M2.5 pilot: m2-6 negative prompt field (loop) · then OD 8 IP-Adapter, OD 9 negative prompt, P5.
 
 ## M3 — Own-domain site (automated; after O2/O3 decided)
 Front end on Nimrod's domain, backend API, rate limiting (Open Discussion 5). Gate: phone scan of a result served from that domain.

@@ -14,7 +14,9 @@ One **step** = one queue item from `docs/04` (or an Open Discussion entry promot
 | Reviewer | top | spec + `git diff main` | `approve` or numbered defects | nothing |
 | Merger | none (script) | reviewer verdict + CI | squash-merge, delete branch, rerun suite on main, state line | main |
 
-A role may stop and report instead of doing its task. Its final message then starts with the header and line 2 `BLOCKED: <reason>`. The driver stops the step and puts the reply in the needs-nimrod issue. The Architect blocks by writing a non-empty 'Blocking questions' section; the driver stops before the Tester.
+A role may stop and report instead of doing its task. Its final message then starts with `BLOCKED: <reason>` (after the header, if given). The driver stops the step and puts the reply in the needs-nimrod issue. The Architect blocks by writing a non-empty 'Blocking questions' section; the driver stops before the Tester.
+
+The driver verifies each session's model from the JSON `modelUsage`; the header line is advisory.
 
 ### 1a. Real-generation test
 `local\run_batch.py --seed 12345` (peony, defaults) must report ≥ 50 % pass. Runs on the PC only; marked `@pytest.mark.gpu` and skipped in CI. Before any GPU test the session checks `local\comfy_state.py`; if ComfyUI is busy it waits, and VRAM contention is a stop, not a retry.
@@ -50,7 +52,7 @@ The Architect names the lane in the spec; the orchestrator refuses to auto-merge
 
 ## 5. Guards
 
-- Caps: 3 steps/day, 2 implementer attempts/step, `--max-turns 40` per session, daily spend ceiling read from session JSON `total_cost_usd` (proposed USD 15 equivalent; subscription usage counts the same way). Any cap hit → loop pauses, state line posted as an issue.
+- Caps: 3 steps/day, 2 implementer attempts/step, `--max-turns 40` per session, daily spend ceiling read from session JSON `total_cost_usd` (USD 40 equivalent (Nimrod, 2026-09-29); subscription usage counts the same way). Any cap hit → loop pauses, state line posted as an issue.
 - Stop on **two consecutive red reviews** on the same step.
 - Pinned versions: sessions run in the repo's `.venv` from `requirements-ci.txt`; CI uses the same file.
 - Provenance: any `docs/` change must cite `file:line` or a quoted decision of Nimrod's (issue/PR comment URL); the Reviewer rejects otherwise.
@@ -79,3 +81,4 @@ After every merge the orchestrator writes `docs/STATE.md`: `Main at <hash> · ph
 - v0.1 (2026-09-24) — initial draft.
 - v0.2 (2026-09-26) — host = Windows PC; real-generation test; ComfyUI-idle guard; calibration defect 8. Approved by Nimrod in chat 2026-09-26.
 - v0.3 (2026-09-29) — pilot = m2-6; BLOCKED handling (§1). Provenance: issue #15.
+- v0.3.1 (2026-09-29) — model verified from modelUsage; header advisory; 40 USD. Provenance: loop runs m2-5 tester-1 and m2-6 implementer-1 (good sessions stopped on header).

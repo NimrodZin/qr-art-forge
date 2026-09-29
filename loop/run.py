@@ -5,8 +5,9 @@
 Per step: Architect → Tester (red on main) → [Implementer → CI → Reviewer] × attempts →
 GPU test if touches_gpu → merge (ordinary lane, APPROVE, CI green, no never-economize path)
 or stop PR-ready with needs-nimrod. Any stop opens/appends issue `loop: needs-nimrod <id>`.
-A role may stop instead (06 §1): line 2 `BLOCKED: <reason>`, or for the Architect a non-empty
-'Blocking questions' section; the step stops there and the reply goes into the issue.
+A role may stop instead (06 §1): `BLOCKED: <reason>` first (after the header, if given), or for the
+Architect a non-empty 'Blocking questions' section; the step stops there and the reply goes into the issue.
+A session's model is verified from its JSON modelUsage; the header line is advisory.
 """
 from __future__ import annotations
 
@@ -44,9 +45,9 @@ def within(path: str, allowed: list[str]) -> bool:
     return any(path == a.rstrip("/") or path.startswith(a.rstrip("/") + "/") for a in allowed)
 
 
-def parse_verdict(text: str) -> tuple[bool, str]:
-    """Line 1 is the header; the first non-blank line after it is `APPROVE` or the defect list."""
-    body = text.split("## Handover")[0].strip().splitlines()[1:]
+def parse_verdict(text: str, cls: str, step_id: str) -> tuple[bool, str]:
+    """The first non-blank line after the header (if given) is `APPROVE` or the defect list."""
+    body = session.strip_header(text.split("## Handover")[0], cls, step_id).splitlines()
     body = [l for l in body if l.strip()]
     if body and body[0].strip().strip("*`").strip() == "APPROVE":
         return True, ""
@@ -151,7 +152,8 @@ class Driver:
         self.check_budget()
         r = session.run_role(role, step, extra, self.cfg, self.repo, self.runs, attempt)
         self.log(step, f"{role} #{attempt} · {r.duration_s:.0f}s · {r.cost_usd:.2f} USD · "
-                       f"{'ERROR ' + r.error if r.is_error else 'BLOCKED' if r.blocked else 'ok'}")
+                       f"{'ERROR ' + r.error if r.is_error else 'BLOCKED' if r.blocked else 'ok'}"
+                       f"{'' if r.header_ok else ' · header missing (advisory)'}")
         where = f"\n\nFull reply: `loop/runs/{step.id}/{role}-{attempt}.json` on the PC."
         if r.is_error:
             raise Stop(f"{role} session error: {r.error}",
@@ -227,7 +229,7 @@ class Driver:
             diff = git(self.repo, "diff", f"{self.base}...HEAD")
             rev = self.session("reviewer", step, {"spec": spec, "diff": diff,
                                                   "ci": "green" if ci else "RED or timed out"}, attempt)
-            approved, body = parse_verdict(rev.text)
+            approved, body = parse_verdict(rev.text, session.role_class("reviewer", step), step.id)
             self.log(step, "review APPROVE" if approved else f"review red: {body.splitlines()[0][:120]}")
             if approved and ci:
                 break
