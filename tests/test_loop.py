@@ -81,7 +81,7 @@ def cfg(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.jsonl"))
     monkeypatch.setenv("FAKE_GH_LOG", str(tmp_path / "gh.jsonl"))
     for var in ("FAKE_REVIEW", "FAKE_NO_HEADER", "FAKE_TESTER_GREEN", "FAKE_IMPL_ESCAPE", "FAKE_GH_CHECKS",
-                "FAKE_ARCH_BLOCKED", "FAKE_ROLE_BLOCKED"):
+                "FAKE_ARCH_BLOCKED", "FAKE_ROLE_BLOCKED", "FAKE_MODEL"):
         monkeypatch.delenv(var, raising=False)
     c = L("config").load_config()
     c.update(claude_cmd=[sys.executable, FAKE_CLAUDE], gh_cmd=[sys.executable, FAKE_GH],
@@ -201,10 +201,29 @@ def test_session_runs_role_and_records(cfg, repo, tmp_path):
     assert not any("Role: Architect" in x for x in c["argv"])
 
 
-def test_session_rejects_missing_header(cfg, repo, tmp_path, monkeypatch):
+def test_session_header_missing_is_advisory(cfg, repo, tmp_path, monkeypatch):
+    s = L("session")
+    work = repo()
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs")
+    assert not r.is_error and r.header_ok is True
     monkeypatch.setenv("FAKE_NO_HEADER", "1")
-    r = L("session").run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, repo(), tmp_path / "runs")
-    assert r.is_error and "header" in r.error
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs", 2)
+    assert not r.is_error and r.error == "" and r.header_ok is False
+    assert r.text.splitlines()[0] == "APPROVE"
+
+
+def test_session_wrong_model_is_error(cfg, repo, tmp_path, monkeypatch):
+    s = L("session")
+    work = repo()
+    monkeypatch.setenv("FAKE_MODEL", "claude-sonnet-5")                  # reviewer is top → opus
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs")
+    assert r.is_error and "wrong model" in r.error
+    monkeypatch.setenv("FAKE_MODEL", "claude-opus-5-5")                  # scoped implementer → sonnet
+    r = s.run_role("implementer", _step(), {"spec": "s"}, cfg, work, tmp_path / "runs")
+    assert r.is_error and "wrong model" in r.error
+    monkeypatch.setenv("FAKE_MODEL", "claude-opus-5-5,claude-haiku-4-5-20251001")   # pinned + helper
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs", 2)
+    assert not r.is_error and r.error == ""
 
 
 def test_session_marks_blocked_reply_without_error(cfg, repo, tmp_path, monkeypatch):
@@ -216,6 +235,51 @@ def test_session_marks_blocked_reply_without_error(cfg, repo, tmp_path, monkeypa
     r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs", 2)
     assert not r.is_error and r.blocked is True
     assert r.text.splitlines()[1] == "BLOCKED: fake reason"
+    monkeypatch.setenv("FAKE_NO_HEADER", "1")
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs", 3)
+    assert not r.is_error and r.blocked is True and r.header_ok is False
+    assert r.text.splitlines()[0] == "BLOCKED: fake reason"
+
+
+H = "Class: top · Step: t-1"
+
+
+@pytest.mark.parametrize("text,blocked", [
+    ("BLOCKED: no spec\n\nwhy", True),
+    (f"{H}\nBLOCKED: no spec\n\nwhy", True),
+    (f"{H}\n\n**BLOCKED: no spec**", True),
+    ("\n\nBLOCKED: t-1 needs a top-class answer", True),    # names class and step, still not a header
+    (f"{H}\nDone.\n\nBLOCKED: later line", False),
+    ("Done.\nBLOCKED: line 2 of a headerless reply", False),
+    (f"{H}\nAPPROVE", False),
+])
+def test_is_blocked_with_or_without_header(text, blocked):
+    assert L("session").is_blocked(text, "top", "t-1") is blocked
+
+
+def test_strip_header_removes_only_the_header_line():
+    s = L("session")
+    assert s.strip_header(f"{H}\nAPPROVE\n", "top", "t-1").strip() == "APPROVE"
+    assert s.strip_header("APPROVE\nmore\n", "top", "t-1").strip() == "APPROVE\nmore"
+    assert s.strip_header("Class: scoped · Step: t-1\nAPPROVE", "top", "t-1").startswith("Class: scoped")
+
+
+@pytest.mark.parametrize("text,approved", [
+    ("APPROVE\n\n## Handover\n- Not certain: None", True),
+    (f"{H}\nAPPROVE\n\n## Handover\n- Not certain: None", True),
+    (f"{H}\n\n**APPROVE**", True),
+    ("1. app.py:3 wrong default.\n2. tests pin nothing.", False),
+    (f"{H}\n1. app.py:3 wrong default.\n2. tests pin nothing.", False),
+    (f"{H}\n", False),
+    ("", False),
+])
+def test_parse_verdict_with_or_without_header(text, approved):
+    ok, body = L("run").parse_verdict(text, "top", "t-1")
+    assert ok is approved
+    if not approved:
+        assert body and "Class: top" not in body
+    if "app.py:3" in text:
+        assert body.splitlines()[0] == "1. app.py:3 wrong default."
 
 
 def test_every_prompt_tells_the_role_how_to_stop():
@@ -245,6 +309,14 @@ def test_blocking_questions_section_is_returned():
     got = L("run").blocking(spec)
     assert "B1: this step changes docs/02." in got and "Recommendation: A." in got
     assert "Handover" not in got and "Not certain" not in got
+
+
+@pytest.mark.parametrize("head", ["", H + "\n"])
+def test_blocking_unaffected_by_missing_header(head):
+    run = L("run")
+    assert run.blocking(head + "## Scope\nx\n\n## 5. Blocking questions\nNone\n") == ""
+    got = run.blocking(head + "## Scope\nx\n\n## 5. Blocking questions\nB1: docs/02? A or B.\n")
+    assert "B1: docs/02? A or B." in got
 
 
 def test_status_blocked_line_blocks():
@@ -382,13 +454,43 @@ def test_driver_stops_when_tester_blocks(cfg, repo, tmp_path, monkeypatch):
 
 
 def test_driver_session_error_issue_carries_reply_excerpt(cfg, repo, tmp_path, monkeypatch):
-    monkeypatch.setenv("FAKE_NO_HEADER", "1")
+    monkeypatch.setenv("FAKE_MODEL", "claude-haiku-4-5-20251001")
     work = repo()
     assert drive(cfg, work, tmp_path) == 1
-    assert "architect session error: missing header" in log_text(tmp_path)
+    assert "architect session error: wrong model" in log_text(tmp_path)
     body = _issue_body(tmp_path)
     assert "session error" in body
     assert "Fake spec for t-1" in body and "Blocking questions: None" in body
+
+
+def test_driver_header_missing_is_advisory(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_NO_HEADER", "1")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 0          # headerless APPROVE still approves
+    assert [c["role"] for c in calls(tmp_path, "claude.jsonl")] == ["architect", "tester", "implementer", "reviewer"]
+    log = log_text(tmp_path)
+    assert log.count("header missing (advisory)") == 4
+    assert "session error" not in log and "review APPROVE" in log and "merged" in log
+
+
+def test_driver_stops_when_headerless_tester_blocks(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_NO_HEADER", "1")
+    monkeypatch.setenv("FAKE_ROLE_BLOCKED", "tester")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert "STOP · tester blocked" in log_text(tmp_path)
+    assert "BLOCKED: fake reason" in _issue_body(tmp_path)
+
+
+def test_driver_stops_architect_block_without_header(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_NO_HEADER", "1")
+    monkeypatch.setenv("FAKE_ARCH_BLOCKED", "1")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert [c["role"] for c in calls(tmp_path, "claude.jsonl")] == ["architect"]
+    log = log_text(tmp_path)
+    assert "STOP · architect blocked" in log and "session error" not in log
+    assert "B1: fake question" in _issue_body(tmp_path)
 
 
 def test_driver_runs_gpu_test_for_gpu_steps(cfg, repo, tmp_path):

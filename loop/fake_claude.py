@@ -5,6 +5,7 @@ Env: FAKE_CLAUDE_LOG (append one JSON line per call) · FAKE_REVIEW=defects · F
 FAKE_TESTER_GREEN=1 (tests pass before implementation) · FAKE_IMPL_ESCAPE=1 (implementer edits
 tests/) · FAKE_ARCH_BLOCKED=1 (spec with a non-empty Blocking questions section) ·
 FAKE_ROLE_BLOCKED=<role> (that role replies header + `BLOCKED: fake reason`, does nothing) ·
+FAKE_MODEL=<id>[,<id>…] (modelUsage reports these instead of the --model argument) ·
 FAKE_COST (default 0.01).
 """
 import json
@@ -58,10 +59,11 @@ def main():
 
     text = ("" if os.environ.get("FAKE_NO_HEADER") else header + "\n") + body + HANDOVER
     model = sys.argv[sys.argv.index("--model") + 1] if "--model" in sys.argv else "fake"
+    models = os.environ.get("FAKE_MODEL", model).split(",")
     print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": text,
                       "session_id": f"fake-{role}", "num_turns": 1, "duration_ms": 1,
                       "total_cost_usd": float(os.environ.get("FAKE_COST", "0.01")),
-                      "modelUsage": {model: {}}}))
+                      "modelUsage": {m: {} for m in models}}))
 
 
 if __name__ == "__main__":

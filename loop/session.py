@@ -42,7 +42,8 @@ class Result:
     is_error: bool
     duration_s: float
     error: str = ""
-    blocked: bool = False       # the role stopped to report: line 2 is `BLOCKED: <reason>` (06 §1)
+    blocked: bool = False       # the role stopped to report: `BLOCKED: <reason>` after the header, if any (06 §1)
+    header_ok: bool = True      # line 1 is the header; advisory only (the model is checked from modelUsage)
 
 
 def role_class(role: str, step) -> str:
@@ -83,10 +84,24 @@ def has_header(text: str, cls: str, step_id: str) -> bool:
     return bool(word(cls) and word(step_id))
 
 
-def is_blocked(text: str) -> bool:
-    """The first non-blank line after the header starts with `BLOCKED:`."""
-    body = [l for l in text.strip().splitlines()[1:] if l.strip()]
-    return bool(body) and body[0].strip("#*`> ").startswith("BLOCKED:")
+def strip_header(text: str, cls: str, step_id: str) -> str:
+    """The reply without line 1 iff line 1 is the header; otherwise the reply, stripped."""
+    lines = text.strip().splitlines()
+    return "\n".join(lines[1:]) if lines and has_header(lines[0], cls, step_id) else text.strip()
+
+
+def is_blocked(text: str, cls: str, step_id: str) -> bool:
+    """The first non-blank line, after the header if given, starts with `BLOCKED:` (06 §1). The
+    unstripped reply is checked too, so a BLOCKED line naming the class and step is not taken as the header."""
+    firsts = [next((l for l in t.splitlines() if l.strip()), "") for t in (text, strip_header(text, cls, step_id))]
+    return any(l.strip("#*`> ").startswith("BLOCKED:") for l in firsts)
+
+
+def wrong_model(data: dict, pinned: str) -> str:
+    """Empty if the session's JSON modelUsage includes the pinned model (helper models such as haiku
+    may appear beside it); otherwise the error."""
+    used = list(data.get("modelUsage") or {})
+    return "" if pinned in used else f"wrong model (pinned {pinned}; modelUsage {used or 'empty'})"
 
 
 def run_role(role: str, step, extra_context: dict, cfg: dict, repo, runs_dir, attempt: int = 1) -> Result:
@@ -109,15 +124,17 @@ def run_role(role: str, step, extra_context: dict, cfg: dict, repo, runs_dir, at
     cost = float(data.get("total_cost_usd") or 0.0)
     if not error and (data.get("is_error") or rc != 0):
         error = f"session error (exit {rc}, {data.get('subtype')}): {text[:300] or stderr.strip()[:300]}"
-    if not error and not has_header(text, role_class(role, step), step.id):
-        error = f"missing header line (expected '{header(role, step)}')"
+    cls = role_class(role, step)
+    if not error:
+        error = wrong_model(data, cfg["models"][cls])
+    header_ok = has_header(text, cls, step.id)
     res = Result(text, cost, data.get("session_id"), bool(error), time.monotonic() - t0, error,
-                 blocked=not error and is_blocked(text))
+                 blocked=not error and is_blocked(text, cls, step.id), header_ok=header_ok)
     out = Path(runs_dir) / step.id
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{role}-{attempt}.json").write_text(json.dumps({
         "date": datetime.date.today().isoformat(), "role": role, "attempt": attempt,
         "cost_usd": cost, "models": list(data.get("modelUsage") or {}), "argv": argv,
-        "returncode": rc, "error": error, "stderr": stderr, "prompt": prompt,
+        "returncode": rc, "error": error, "header_ok": header_ok, "stderr": stderr, "prompt": prompt,
         "response": data or raw}, indent=1, ensure_ascii=False), encoding="utf-8")
     return res

@@ -79,7 +79,7 @@ def replay(n: int, slug: str, patch: Path, base: str, cfg: dict, out: Path) -> d
     finally:
         git(ROOT, "worktree", "remove", "--force", str(wt), check=False)
         shutil.rmtree(wt.parent, ignore_errors=True)
-    approved, defects = parse_verdict(res.text)
+    approved, defects = parse_verdict(res.text, step.cls, step.id)
     caught = not res.is_error and not approved and names_file(defects, files)
     rec = {"seed": n, "slug": slug, "files": files, "base": base, "error": res.error,
            "verdict": "APPROVE" if approved else "defects", "caught": caught,
