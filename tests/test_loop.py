@@ -81,7 +81,8 @@ def cfg(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.jsonl"))
     monkeypatch.setenv("FAKE_GH_LOG", str(tmp_path / "gh.jsonl"))
     for var in ("FAKE_REVIEW", "FAKE_NO_HEADER", "FAKE_TESTER_GREEN", "FAKE_IMPL_ESCAPE", "FAKE_GH_CHECKS",
-                "FAKE_ARCH_BLOCKED", "FAKE_ROLE_BLOCKED", "FAKE_MODEL"):
+                "FAKE_ARCH_BLOCKED", "FAKE_ROLE_BLOCKED", "FAKE_MODEL", "FAKE_TESTER_NONE", "FAKE_IMPL_NOOP",
+                "FAKE_IMPL_RED", "FAKE_IMPL_UI", "FAKE_GH_NO_LABEL"):
         monkeypatch.delenv(var, raising=False)
     c = L("config").load_config()
     c.update(claude_cmd=[sys.executable, FAKE_CLAUDE], gh_cmd=[sys.executable, FAKE_GH],
@@ -134,10 +135,12 @@ def test_queue_rejects_bad_class(tmp_path):
 
 def test_real_build_plan_queue_parses():
     steps = L("queue").parse_queue((ROOT / "docs" / "04_Build_Plan.md").read_text(encoding="utf-8"))
-    assert [s.id for s in steps][:3] == ["m2-6", "m2-5", "m2-7"]
+    assert [s.id for s in steps][:3] == ["m2-6", "m2-7", "m2-5"]
     assert steps[0].paths == ["app.py", "tests/"] and not steps[0].touches_gpu
     assert (steps[0].cls, steps[0].lane) == ("scoped", "ordinary")          # the pilot (06 §7)
-    assert (steps[1].cls, steps[1].lane) == ("top", "never-economize")      # bleed canvas, issue #15
+    assert steps[0].done and not steps[1].done                               # m2-7: the unattended proof (M2.9)
+    assert (steps[1].cls, steps[1].lane, steps[1].touches_gpu) == ("scoped", "ordinary", True)
+    assert (steps[2].cls, steps[2].lane) == ("top", "never-economize")      # bleed canvas, issue #15
 
 
 # (b) session ----------------------------------------------------------------------------
@@ -491,6 +494,129 @@ def test_driver_stops_architect_block_without_header(cfg, repo, tmp_path, monkey
     log = log_text(tmp_path)
     assert "STOP · architect blocked" in log and "session error" not in log
     assert "B1: fake question" in _issue_body(tmp_path)
+
+
+# (h) M2.8 fixes from the pilot (loop/runs/m2-6/log.md) ----------------------------------------
+
+def _order(tmp_path):
+    """Stage lines of the step log, without timestamps."""
+    return [l.split(" · ", 1)[1] for l in log_text(tmp_path).splitlines()]
+
+
+def test_driver_suite_red_after_commit_goes_back_without_push(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_IMPL_RED", "first")         # attempt 1 leaves the suite red, attempt 2 fixes it
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 0
+    roles = [c["role"] for c in calls(tmp_path, "claude.jsonl")]
+    assert roles == ["architect", "tester", "implementer", "implementer", "reviewer"]   # no review of attempt 1
+    second = [c for c in calls(tmp_path, "claude.jsonl") if c["role"] == "implementer"][1]["stdin_prompt"]
+    assert "test_loopfake" in second and "failed" in second                 # the red suite's tail is the defect list
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert sum(a[:2] == ["pr", "create"] for a in gh) == 1
+    assert sum(a[:2] == ["pr", "checks"] for a in gh) == 2                 # attempt 2 + queue/state, none for 1
+    order = _order(tmp_path)
+    red = next(i for i, l in enumerate(order) if l.startswith("suite red after commit"))
+    pr = next(i for i, l in enumerate(order) if l.startswith("PR "))
+    assert red < pr                                                          # no push before the suite is green
+    msgs = sh(work, "git", "log", "--format=%s", "loop/t-1")
+    assert "implementation (attempt 1)" in msgs and "implementation (attempt 2)" in msgs
+
+
+def test_driver_suite_red_on_every_attempt_stops_without_pr(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_IMPL_RED", "always")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert [c["role"] for c in calls(tmp_path, "claude.jsonl")] == ["architect", "tester", "implementer", "implementer"]
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert not any(a[:2] in (["pr", "create"], ["pr", "checks"], ["pr", "merge"]) for a in gh)
+    assert "2 implementer attempts" in log_text(tmp_path)
+    assert sh(work, "git", "ls-remote", "origin", "loop/t-1").strip() == ""      # never pushed
+
+
+def test_driver_suite_deselects_gpu_tests(cfg, repo, tmp_path):
+    work = repo()
+    (work / "tests" / "test_gpu_only.py").write_text(
+        "import pytest\n\n\n@pytest.mark.gpu\ndef test_needs_the_4070():\n    assert False\n")
+    sh(work, "git", "add", "-A")
+    sh(work, "git", "commit", "-q", "-m", "gpu test")
+    sh(work, "git", "push", "-q", "origin", "main")
+    assert drive(cfg, work, tmp_path) == 0                  # suite after commit and on main run -m "not gpu"
+    assert "suite red" not in log_text(tmp_path)
+
+
+def test_driver_ci_red_sends_failed_log_to_implementer(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_GH_CHECKS", "fail")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    runs = [a for a in gh if a[:2] == ["run", "list"]]
+    assert runs and _flag(runs[0], "--branch") == "loop/t-1"
+    assert ["run", "view", "4242", "--log-failed"] in gh                    # the latest run id from `run list`
+    second = [c for c in calls(tmp_path, "claude.jsonl") if c["role"] == "implementer"][1]["stdin_prompt"]
+    assert "fake failed log line 99" in second and "fake failed log line 40" in second
+    assert "fake failed log line 39" not in second                           # last 60 lines only
+
+
+def test_driver_stops_when_implementer_changes_nothing(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_IMPL_NOOP", "1")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert [c["role"] for c in calls(tmp_path, "claude.jsonl")] == ["architect", "tester", "implementer"]
+    assert "STOP · implementer made no change" in log_text(tmp_path)
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert not any(a[:2] in (["pr", "create"], ["pr", "checks"]) for a in gh)
+    assert "**Reason:** implementer made no change" in _issue_body(tmp_path)
+    assert sh(work, "git", "ls-remote", "origin", "loop/t-1").strip() == ""
+
+
+def test_driver_tester_no_test_files_stop_carries_reply(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_TESTER_NONE", "1")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    assert "STOP · tester wrote no test files" in log_text(tmp_path)
+    body = _issue_body(tmp_path)
+    assert "**Reason:** tester wrote no test files" in body
+    assert "The fake tester wrote no tests: nothing in the spec is testable." in body
+    assert "loop/runs/t-1/tester-1.json" in body
+
+
+def test_ui_strings_from_added_app_lines(cfg, repo):
+    g = L("gates")
+    work = repo()
+    sh(work, "git", "checkout", "-q", "-b", "x")
+    app = work / "app.py"
+    app.write_text(app.read_text() +
+                   'box = gr.Textbox(label="Negative prompt", placeholder="e.g. text")\n'
+                   'gr.Markdown("Failed generations may be stored.")\n'
+                   "n = 2  # no UI string\n")
+    (work / "other.py").write_text('x = gr.Textbox(label="not app.py")\n')
+    sh(work, "git", "add", "-A")
+    sh(work, "git", "commit", "-qm", "ui")
+    assert g.ui_strings(work, "main") == ['box = gr.Textbox(label="Negative prompt", placeholder="e.g. text")',
+                                          'gr.Markdown("Failed generations may be stored.")']
+
+
+def test_driver_flags_ui_change_in_pr_body_and_label(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_IMPL_UI", "1")
+    monkeypatch.setenv("FAKE_GH_NO_LABEL", "ui-change")      # label missing on the repo → driver creates it
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 0                   # auto-merge unaffected
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    body = _flag([a for a in gh if a[:2] == ["pr", "create"]][0], "--body")
+    assert "UI change — approve by seeing" in body
+    assert 'label="Fake label"' in body and 'gr.Markdown("Fake UI note")' in body
+    create = [i for i, a in enumerate(gh) if a[:3] == ["label", "create", "ui-change"]]
+    added = [i for i, a in enumerate(gh) if a[:2] == ["pr", "edit"] and a[-2:] == ["--add-label", "ui-change"]]
+    assert create and added and added[-1] > create[0]
+    assert ["pr", "merge", "7", "--squash", "--delete-branch"] in gh
+
+
+def test_driver_no_ui_flag_without_ui_strings(cfg, repo, tmp_path):
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 0
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert "UI change" not in _flag([a for a in gh if a[:2] == ["pr", "create"]][0], "--body")
+    assert not any("ui-change" in a for a in gh)
 
 
 def test_driver_runs_gpu_test_for_gpu_steps(cfg, repo, tmp_path):

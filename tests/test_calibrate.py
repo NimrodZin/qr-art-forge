@@ -29,14 +29,42 @@ def records(runs):
     return stamp, [json.loads(p.read_text(encoding="utf-8")) for p in sorted(stamp.glob("*.json"))]
 
 
-def test_eight_seeds_each_apply_cleanly_on_head():
+def head_text(path):
+    """The file as committed on HEAD (LF), whatever core.autocrlf did to the checkout."""
+    return subprocess.run(["git", "show", f"HEAD:{path}"], cwd=ROOT, check=True,
+                          capture_output=True).stdout.decode("utf-8")
+
+
+def test_eight_seeds_are_exact_edits_whose_old_occurs_once_on_head():
     seeds = cal().seeds()
     assert [n for n, _, _ in seeds] == list(range(1, 9))
-    for n, slug, patch in seeds:
-        p = subprocess.run(["git", "apply", "--check", "--cached", "-"], cwd=ROOT,
-                           input=cal().patch_bytes(patch), capture_output=True)
-        assert p.returncode == 0, f"{patch.name}: {p.stderr.decode()}"
-        assert cal().patched_files(patch), patch.name
+    assert not list((ROOT / "loop" / "seeds").glob("*.patch"))         # replaced by .json (M2.8)
+    for n, slug, path in seeds:
+        assert path.name == f"{n}-{slug}.json"
+        edits = cal().load_seed(path)
+        assert edits, path.name
+        for e in edits:
+            assert set(e) == {"file", "old", "new", "defect"}, path.name
+            assert e["old"] and e["old"] != e["new"] and e["defect"], path.name
+            assert head_text(e["file"]).count(e["old"]) == 1, f"{path.name}: `old` not exactly once in {e['file']}"
+
+
+def test_seed_8_is_the_smallest_edit():
+    (e,) = cal().load_seed(ROOT / "loop" / "seeds" / "8-gallery-not-png.json")
+    assert (e["file"], e["old"], e["new"]) == ("app.py", ', format="png")', ")")
+
+
+def test_apply_seed_replaces_exactly_once_or_errors(tmp_path):
+    c = cal()
+    (tmp_path / "a.txt").write_text("x = 1\ny = 2\n", encoding="utf-8")
+    c.apply_seed([{"file": "a.txt", "old": "y = 2", "new": "y = 3", "defect": "d"}], tmp_path)
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "x = 1\ny = 3\n"
+    with pytest.raises(ValueError, match="0 times"):
+        c.apply_seed([{"file": "a.txt", "old": "z = 9", "new": "z", "defect": "d"}], tmp_path)
+    (tmp_path / "b.txt").write_text("k\nk\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="2 times"):
+        c.apply_seed([{"file": "b.txt", "old": "k", "new": "j", "defect": "d"}], tmp_path)
+    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "k\nk\n"          # nothing written on error
 
 
 def test_fake_defect_review_catches_all_eight(fake, monkeypatch, capsys):
