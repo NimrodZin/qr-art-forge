@@ -83,4 +83,4 @@ After every merge the orchestrator writes `docs/STATE.md`: `Main at <hash> · ph
 - v0.3 (2026-09-29) — pilot = m2-6; BLOCKED handling (§1). Provenance: issue #15.
 - v0.3.1 (2026-09-29) — model verified from modelUsage; header advisory; 40 USD. Provenance: loop runs m2-5 tester-1 and m2-6 implementer-1 (good sessions stopped on header).
 - v0.4 (2026-09-29) — suite after commit; CI log to Implementer; no-change stop; UI flag; seeds as exact edits. Provenance: loop run m2-6, PR #19.
-- v0.5 (2026-10-03) — gpu_env + double GPU run; secrets stripped from sessions and pytest; gate = run_forge/forge spans + validate token; unprimed calibration with control seeds 9–11; mutation bar on non-equivalent mutants. Provenance: planner audit F2–F4, chat 2026-10-03; PR #<fill in>.
+- v0.5 (2026-10-03) — gpu_env + double GPU run; secrets stripped from sessions and pytest; gate = run_forge/forge spans + validate token; unprimed calibration with control seeds 9–11; mutation bar on non-equivalent mutants. Provenance: planner audit F2–F4, chat 2026-10-03; PR #21.
