@@ -284,10 +284,12 @@ class Driver:
             raise Stop(f"{self.cfg['attempts_per_step']} implementer attempts without APPROVE + green CI")
 
         if step.touches_gpu:
-            if not gates.wait_comfy_idle(self.cfg):
-                raise Stop(f"ComfyUI busy for {self.cfg['comfy_wait_s']}s; GPU test not run")
-            ok, n, tail = gates.gpu_test(self.cfg, self.repo)
-            self.log(step, f"GPU test {n}/4 · {'pass' if ok else 'FAIL'}")
+            try:                        # gpu_test waits for an idle ComfyUI before each run
+                ok, n, tail, runs = gates.gpu_test(self.cfg, self.repo, step.gpu_env)
+            except gates.ComfyBusy as e:
+                raise Stop(f"ComfyUI busy for {self.cfg['comfy_wait_s']}s; GPU test not run ({e})")
+            self.log(step, "GPU test " + " · ".join(f"{r['label']} {r['n']}/4" for r in runs)
+                     + f" · {'pass' if ok else 'FAIL'}")
             if not ok:
                 raise Stop(f"real-generation test {n}/4 (< {self.cfg['gpu_min_pass']}/4):\n{tail}")
 

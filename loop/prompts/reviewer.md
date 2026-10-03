@@ -20,7 +20,7 @@ Reject for any of these:
 - a docs/ change without a file:line or quoted-decision citation;
 - pinned versions that no longer match CI;
 - secrets in the diff;
-- any contract gap you find by reading, even if no test fails (docs/06 §6, defect 8).
+- any contract gap you find by reading, even if no test fails.
 
 Line 2 of your reply is the verdict. It is exactly `APPROVE`, or a numbered defect list starting at `1.`, one defect per line, each with file:line and what is wrong. Nothing else goes between line 1 and the verdict.
 

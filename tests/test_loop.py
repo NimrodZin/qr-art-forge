@@ -141,6 +141,215 @@ def test_real_build_plan_queue_parses():
     assert steps[0].done and not steps[1].done                               # m2-7: the unattended proof (M2.9)
     assert (steps[1].cls, steps[1].lane, steps[1].touches_gpu) == ("scoped", "ordinary", True)
     assert (steps[2].cls, steps[2].lane) == ("top", "never-economize")      # bleed canvas, issue #15
+    assert steps[0].gpu_env == {} and steps[2].gpu_env == {}
+    assert steps[1].gpu_env == {"QRAF_VAE_SLICING": "1"}                    # m2-7: P5 flag, second GPU run
+
+
+# (a2) M2.10 gpu_env ------------------------------------------------------------------------
+
+def test_queue_line_without_gpu_env_parses_unchanged():
+    s = L("queue").parse_queue(QUEUE_DOC.format(line=ORDINARY))[1]
+    assert (s.id, s.title, s.paths, s.touches_gpu, s.pr_url, s.gpu_env) == \
+        ("t-1", "Fake ordinary step", ["app.py", "tests/"], False, None, {})
+
+
+@pytest.mark.parametrize("field,env", [
+    ("gpu_env=QRAF_VAE_SLICING=1", {"QRAF_VAE_SLICING": "1"}),
+    ("gpu_env=A=1;B_2=x=y", {"A": "1", "B_2": "x=y"}),
+    ("gpu_env=EMPTY=", {"EMPTY": ""}),
+])
+def test_queue_line_with_gpu_env(tmp_path, field, env):
+    q = L("queue")
+    line = ORDINARY.replace("touches_gpu=no", f"touches_gpu=yes · {field}")
+    plan = tmp_path / "04.md"
+    plan.write_text(QUEUE_DOC.format(line=line), encoding="utf-8")
+    s = q.next_step(plan)
+    assert (s.id, s.title, s.touches_gpu, s.gpu_env, s.pr_url) == ("t-1", "Fake ordinary step", True, env, None)
+    q.mark_done("t-1", "https://github.com/x/y/pull/8", plan)               # pr_url lands after gpu_env
+    done = [s for s in q.parse_queue(plan.read_text(encoding="utf-8")) if s.id == "t-1"][0]
+    assert done.done and done.gpu_env == env and done.pr_url == "https://github.com/x/y/pull/8"
+
+
+@pytest.mark.parametrize("field", ["gpu_env=", "gpu_env=NOEQ", "gpu_env=1BAD=1", "gpu_env=A=1;A=2",
+                                   "gpu_env=A=1;"])
+def test_queue_rejects_bad_gpu_env(field):
+    with pytest.raises(ValueError, match="gpu_env"):
+        L("queue").parse_queue(QUEUE_DOC.format(line=ORDINARY + f" · {field}"))
+
+
+GPU_ENV_CMD = ("import os; flag = os.environ.get('QRAF_VAE_SLICING') == '1'; "
+               "print(os.environ['N_FLAG' if flag else 'N_DEFAULT'] + '/4 passed. Encoded: x'); "
+               "print('flag=%s token=%s' % (flag, os.environ.get('HF_TOKEN', 'none')))")
+
+
+@pytest.mark.parametrize("n_default,n_flag,ok", [("3", "2", True), ("1", "4", False), ("4", "1", False)])
+def test_gpu_test_runs_twice_with_gpu_env(cfg, repo, monkeypatch, n_default, n_flag, ok):
+    g = L("gates")
+    work = repo()
+    monkeypatch.setenv("N_DEFAULT", n_default)
+    monkeypatch.setenv("N_FLAG", n_flag)
+    monkeypatch.delenv("QRAF_VAE_SLICING", raising=False)
+    cfg["gpu_cmd"] = [sys.executable, "-c", GPU_ENV_CMD]
+    passed, n, tail, runs = g.gpu_test(cfg, work, {"QRAF_VAE_SLICING": "1"})
+    assert passed is ok
+    assert [(r["label"], r["n"], r["pass"]) for r in runs] == \
+        [("default", int(n_default), int(n_default) >= 2), ("with gpu_env", int(n_flag), int(n_flag) >= 2)]
+    assert "flag=False" in runs[0]["tail"] and "flag=True" in runs[1]["tail"]   # per-run tails
+    failing = next((r for r in runs if not r["pass"]), runs[-1])
+    assert (n, tail) == (failing["n"], failing["tail"])
+
+
+def test_gpu_test_runs_once_without_gpu_env(cfg, repo, monkeypatch):
+    g = L("gates")
+    work = repo()
+    monkeypatch.setenv("N_DEFAULT", "2")
+    monkeypatch.setenv("N_FLAG", "0")
+    cfg["gpu_cmd"] = [sys.executable, "-c", GPU_ENV_CMD]
+    for env in (None, {}):
+        passed, n, _, runs = g.gpu_test(cfg, work, env)
+        assert passed and n == 2 and [r["label"] for r in runs] == ["default"]
+
+
+def _comfy_script(monkeypatch, answers):
+    """comfy_idle answers in order (then idle); returns the list of calls made."""
+    g, seen, it = L("gates"), [], iter(answers)
+
+    def fake(url, timeout=3.0):
+        seen.append(url)
+        return next(it, True)
+    monkeypatch.setattr(g, "comfy_idle", fake)
+    return seen
+
+
+def test_gpu_test_checks_comfy_before_each_run(cfg, repo, monkeypatch):
+    work = repo()
+    monkeypatch.setenv("N_DEFAULT", "3")
+    monkeypatch.setenv("N_FLAG", "3")
+    cfg["gpu_cmd"] = [sys.executable, "-c", GPU_ENV_CMD]
+    seen = _comfy_script(monkeypatch, [True, True])
+    assert L("gates").gpu_test(cfg, work, {"QRAF_VAE_SLICING": "1"})[0] is True
+    assert len(seen) == 2                                    # once per run
+    seen = _comfy_script(monkeypatch, [True])
+    L("gates").gpu_test(cfg, work)
+    assert len(seen) == 1
+
+
+def test_gpu_test_comfy_busy_before_second_run_stops(cfg, repo, monkeypatch, tmp_path):
+    g = L("gates")
+    work = repo()
+    marker = tmp_path / "runs.txt"
+    cfg["gpu_cmd"] = [sys.executable, "-c",
+                      f"open({str(marker)!r}, 'a').write('x'); print('3/4 passed. Encoded: x')"]
+    _comfy_script(monkeypatch, [True, False])               # idle before run 1, busy before run 2
+    with pytest.raises(g.ComfyBusy, match="before the with gpu_env run"):
+        g.gpu_test(cfg, work, {"QRAF_VAE_SLICING": "1"})
+    assert marker.read_text() == "x"                         # run 1 happened, run 2 did not
+
+
+@pytest.mark.parametrize("answers,which", [([False], "default"), ([True, False], "with gpu_env")])
+def test_driver_stops_when_comfy_busy_before_a_gpu_run(cfg, repo, tmp_path, monkeypatch, answers, which):
+    monkeypatch.setenv("N_DEFAULT", "3")
+    monkeypatch.setenv("N_FLAG", "3")
+    work = repo(ORDINARY.replace("touches_gpu=no", "touches_gpu=yes · gpu_env=QRAF_VAE_SLICING=1"))
+    cfg["gpu_cmd"] = [sys.executable, "-c", GPU_ENV_CMD]
+    _comfy_script(monkeypatch, answers)
+    assert drive(cfg, work, tmp_path) == 1
+    log = log_text(tmp_path)
+    assert f"ComfyUI busy for 0s; GPU test not run (before the {which} run)" in log
+    assert "GPU test default" not in log and "merged" not in log
+
+
+def test_driver_logs_both_gpu_runs(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("N_DEFAULT", "3")
+    monkeypatch.setenv("N_FLAG", "1")
+    work = repo(ORDINARY.replace("touches_gpu=no", "touches_gpu=yes · gpu_env=QRAF_VAE_SLICING=1"))
+    cfg["gpu_cmd"] = [sys.executable, "-c", GPU_ENV_CMD]
+    assert drive(cfg, work, tmp_path) == 1
+    log = log_text(tmp_path)
+    assert "GPU test default 3/4 · with gpu_env 1/4 · FAIL" in log
+    assert "real-generation test 1/4" in log and "flag=True" in log        # the failing run's tail
+
+
+def test_driver_merges_gpu_step_when_both_runs_pass(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("N_DEFAULT", "3")
+    monkeypatch.setenv("N_FLAG", "2")
+    work = repo(ORDINARY.replace("touches_gpu=no", "touches_gpu=yes · gpu_env=QRAF_VAE_SLICING=1"))
+    cfg["gpu_cmd"] = [sys.executable, "-c", GPU_ENV_CMD]
+    assert drive(cfg, work, tmp_path) == 0
+    assert "GPU test default 3/4 · with gpu_env 2/4 · pass" in log_text(tmp_path)
+
+
+# (a3) M2.10 secrets ------------------------------------------------------------------------
+
+SECRETS = ("HF_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "REJECTS_REPO")
+
+
+@pytest.fixture
+def secrets(monkeypatch):
+    for v in SECRETS:
+        monkeypatch.setenv(v, f"secret-{v}")
+    monkeypatch.setenv("LOOP_NOT_SECRET", "kept")
+
+
+def test_child_env_strips_secrets_unless_kept(secrets):
+    sh_ = L("sh")
+    assert set(sh_.SECRETS) == set(SECRETS)
+    env = sh_.child_env({})
+    assert not {k.upper() for k in env} & set(SECRETS)
+    assert env["LOOP_NOT_SECRET"] == "kept" and env["PYTHONUTF8"] == "1"
+    kept = sh_.child_env({}, keep_secrets=True)
+    assert all(kept[v] == f"secret-{v}" for v in SECRETS)
+
+
+def test_child_env_strips_case_blind(monkeypatch):
+    monkeypatch.setattr(L("sh").os, "environ", {"hf_token": "x", "Gh_Token": "y", "PATH": "p"})
+    assert L("sh").child_env({}) == {"PATH": "p", "PYTHONUTF8": "1"}
+
+
+ENV_PROBE = "import os; print(sorted(v for v in %r if v in os.environ))" % (SECRETS,)
+
+
+def test_run_strips_secrets_and_adds_extra_env(secrets, tmp_path):
+    sh_ = L("sh")
+    assert sh_.run([sys.executable, "-c", ENV_PROBE], tmp_path)[1].strip() == "[]"
+    assert sh_.run([sys.executable, "-c", ENV_PROBE], tmp_path, keep_secrets=True)[1].strip() == str(sorted(SECRETS))
+    out = sh_.run([sys.executable, "-c", "import os; print(os.environ['X_EXTRA'])"], tmp_path,
+                  extra_env={"X_EXTRA": "on"})[1]
+    assert out.strip() == "on"
+
+
+def test_session_env_has_no_secrets(cfg, repo, tmp_path, secrets, monkeypatch):
+    s = L("session")
+    work = repo()
+    seen = []
+    real = s.subprocess.run
+
+    def spy(*a, **kw):
+        seen.append(kw["env"])
+        return real(*a, **kw)
+    monkeypatch.setattr(s.subprocess, "run", spy)
+    r = s.run_role("reviewer", _step(), {"spec": "s", "diff": "d"}, cfg, work, tmp_path / "runs")
+    assert not r.is_error and seen
+    assert not {k.upper() for k in seen[0]} & set(SECRETS) and seen[0]["LOOP_NOT_SECRET"] == "kept"
+
+
+def test_gpu_test_keeps_secrets(cfg, repo, secrets):
+    work = repo()
+    cfg["gpu_cmd"] = [sys.executable, "-c", "import os; print('2/4 passed. token=' + os.environ['HF_TOKEN'])"]
+    ok, n, tail, _ = L("gates").gpu_test(cfg, work)
+    assert ok and n == 2 and "token=secret-HF_TOKEN" in tail
+
+
+def test_driver_pytest_sees_no_secrets(cfg, repo, tmp_path, secrets):
+    work = repo()
+    (work / "tests" / "test_env.py").write_text(
+        "import os\n\n\ndef test_no_secrets():\n"
+        f"    assert not [v for v in {SECRETS!r} if v in os.environ]\n")
+    sh(work, "git", "add", "-A")
+    sh(work, "git", "commit", "-q", "-m", "env probe")
+    sh(work, "git", "push", "-q", "origin", "main")
+    assert drive(cfg, work, tmp_path) == 0                  # suite after commit and on main stay green
+    assert "suite red" not in log_text(tmp_path)
 
 
 # (b) session ----------------------------------------------------------------------------
@@ -678,13 +887,174 @@ def test_touched_never_economize_paths_and_gate_line(cfg, repo):
     lines.insert(1, "    v = {'pass': True}\n")                       # next to the gate line
     app.write_text("".join(lines))
     sh(work, "git", "commit", "-qam", "gate")
-    assert g.touched_never_economize(cfg, work) == ["app.py (THE GATE)"]
+    assert g.touched_never_economize(cfg, work) == ["app.py (gate)"]
     (work / "validator.py").write_text("x = 1\n")
     (work / ".github").mkdir()
     (work / ".github" / "w.yml").write_text("on: push\n")
     sh(work, "git", "add", "-A")
     sh(work, "git", "commit", "-qm", "ne")
-    assert set(g.touched_never_economize(cfg, work)) == {".github/w.yml", "validator.py", "app.py (THE GATE)"}
+    assert set(g.touched_never_economize(cfg, work)) == {".github/w.yml", "validator.py", "app.py (gate)"}
+
+
+# (g2) M2.10 gate spans ----------------------------------------------------------------------
+
+GATE_APP = [
+    "import os",                                          # 1
+    "from validator import validate, summary_line",       # 2
+    "",                                                   # 3
+    "",                                                   # 4
+    "def helper():",                                      # 5
+    "    return 1",                                       # 6
+    "",                                                   # 7
+    "",                                                   # 8
+    "def run_forge(cands, out):",                         # 9
+    "    a = 1",                                          # 10
+    "    b = 2",                                          # 11
+    "    c = 3",                                          # 12
+    "    d = 4",                                          # 13
+    "    e = 5",                                          # 14
+    "    for v in cands:",                                # 15
+    "        if v['pass']:  # THE GATE",                  # 16
+    "            out.append(v)",                          # 17
+    "    return out",                                     # 18
+    "",                                                   # 19
+    "",                                                   # 20
+    "@decorate",                                          # 21
+    "def forge(cands):",                                  # 22
+    "    return run_forge(cands, [])",                    # 23
+    "",                                                   # 24
+    "",                                                   # 25
+    "def other():",                                       # 26
+    "    x = 1",                                          # 27
+    "    y = 2",                                          # 28
+    "    z = 3",                                          # 29
+    "    w = 4",                                          # 30
+    "    v = 5",                                          # 31
+    "    u = 6",                                          # 32
+    "    t = 7",                                          # 33
+    "    s = 8",                                          # 34
+    "    r = 9",                                          # 35
+    "    q = 10",                                         # 36
+    "    p = 11",                                         # 37
+    "    o = 12",                                         # 38
+    "    n = 13",                                         # 39
+    "    m = 14",                                         # 40
+    "    return x",                                       # 41
+    "",                                                   # 42
+    "",                                                   # 43
+    'NOTE = "Failed generations may be stored."  # DISCLOSURE',  # 44
+    "",                                                   # 45
+    "",                                                   # 46
+    "",                                                   # 47
+    "",                                                   # 48
+    "END = 0",                                            # 49
+]
+
+
+def _gate_repo(repo, base_lines=GATE_APP):
+    """Commit base_lines as app.py on main, then branch `x` off it."""
+    work = repo()
+    (work / "app.py").write_text("\n".join(base_lines) + "\n")
+    sh(work, "git", "commit", "-qam", "gate app")
+    sh(work, "git", "checkout", "-q", "-b", "x")
+    return work
+
+
+def _edit_app(work, lineno, new=None, insert=None):
+    lines = (work / "app.py").read_text().splitlines()
+    if new is not None:
+        lines[lineno - 1] = new
+    if insert is not None:
+        lines.insert(lineno, insert)                      # after base line `lineno`
+    (work / "app.py").write_text("\n".join(lines) + "\n")
+    sh(work, "git", "commit", "-qam", f"edit {lineno}")
+
+
+def test_gate_spans_from_ast():
+    spans = L("gates").gate_spans("\n".join(GATE_APP) + "\n", ["run_forge", "forge"])
+    assert sorted(spans) == [(2, 2), (9, 18), (21, 23)]   # import line, run_forge, forge with decorator
+
+
+@pytest.mark.parametrize("lineno,new,insert,hit", [
+    (11, "    b = 22", None, True),                       # inside run_forge, > 3 lines from the marker
+    (18, None, "    out.sort()", True),                   # appended to run_forge's last line
+    (21, "@other_decorator", None, True),                 # forge's decorator
+    (23, "    return run_forge(cands, [1])", None, True),  # forge body
+    (2, "from validator import validate", None, True),    # validator import line
+    (1, "import os, sys", None, False),                   # a plain import
+    (6, "    return 2", None, False),                     # helper, outside every span
+    (34, "    s = 80", None, False),                      # other(), far from both markers
+    (34, "    s = 8  # DISCLOSURE moved here", None, True),  # changed line carries a marker
+    (47, "EXTRA = 1", None, True),                        # within ±3 of the DISCLOSURE line on base
+    (48, "EXTRA = 1", None, False),                       # 4 lines away: outside ±3
+])
+def test_gate_span_and_marker_hits(cfg, repo, lineno, new, insert, hit):
+    g = L("gates")
+    work = _gate_repo(repo)
+    _edit_app(work, lineno, new, insert)
+    assert g.touched_never_economize(cfg, work) == (["app.py (gate)"] if hit else [])
+
+
+def test_gate_spans_come_from_base(cfg, repo):
+    g = L("gates")
+    work = _gate_repo(repo)
+    _edit_app(work, 6, insert="import validator")           # an import added outside base's spans
+    assert g.touched_never_economize(cfg, work) == []
+    _edit_app(work, 2, new="from validator import validate as v2")   # base's import line itself
+    assert g.touched_never_economize(cfg, work) == ["app.py (gate)"]
+
+
+@pytest.mark.parametrize("lineno,new,insert,hit", [
+    (0, None, 'validate = lambda *a: {"pass": True}', True),   # module-level rebinding at the top
+    (34, "    s = validate(8, 'x')", None, True),              # token in other(), far from every span
+    (6, "    return 2  # validate later", None, True),         # token in a comment still counts
+    (34, "    s = revalidated_count", None, False),            # no word boundary: not the token
+    (34, "    s = _validate", None, False),
+])
+def test_gate_validate_token_outside_spans(cfg, repo, lineno, new, insert, hit):
+    work = _gate_repo(repo)
+    _edit_app(work, lineno, new, insert)
+    assert L("gates").touched_never_economize(cfg, work) == (["app.py (gate)"] if hit else [])
+
+
+def test_gate_validate_token_on_removed_line(cfg, repo):
+    lines = GATE_APP[:40] + ["    k = validate"] + GATE_APP[40:]   # inside other(), outside every span
+    work = _gate_repo(repo, lines)
+    _edit_app(work, 41, "    k = 0")
+    assert L("gates").touched_never_economize(cfg, work) == ["app.py (gate)"]
+
+
+def test_gate_marker_config_as_string_still_works(cfg, repo):
+    cfg["never_economize"] = dict(cfg["never_economize"], gate_marker="THE GATE")
+    work = _gate_repo(repo)
+    _edit_app(work, 34, "    s = 8  # DISCLOSURE")         # DISCLOSURE is not a marker in this config
+    assert L("gates").touched_never_economize(cfg, work) == []
+
+
+@pytest.mark.parametrize("base,why", [
+    (["def forge(:", "    pass", "x = 1"], "SyntaxError"),             # base app.py does not parse
+    (["def renamed():", "    pass", "x = 1"], "LookupError"),          # no gate function on base
+])
+def test_gate_fails_closed_when_base_unreadable(cfg, repo, base, why):
+    work = _gate_repo(repo, base)
+    _edit_app(work, 3, "x = 2")                                        # far from anything, harmless
+    (hit,) = L("gates").touched_never_economize(cfg, work)
+    assert hit.startswith("app.py (gate: fail closed") and why in hit
+
+
+def test_gate_not_checked_when_app_untouched(cfg, repo):
+    work = _gate_repo(repo, ["def forge(:"])                           # unparsable, but app.py unchanged
+    (work / "other.py").write_text("x = 1\n")
+    sh(work, "git", "add", "-A")
+    sh(work, "git", "commit", "-qm", "other")
+    assert L("gates").touched_never_economize(cfg, work) == []
+
+
+def test_real_app_parses_with_both_gate_functions(cfg):
+    src = subprocess.run(["git", "show", "HEAD:app.py"], cwd=ROOT, check=True, capture_output=True).stdout.decode()
+    spans = L("gates").gate_spans(src, cfg["never_economize"]["gate_functions"])
+    assert len([s for s in spans if s[1] > s[0]]) == 2                  # run_forge and forge
+    assert any(s[0] == s[1] for s in spans)                             # `from validator import ...`
 
 
 def test_ci_green_reads_buckets(cfg, monkeypatch):

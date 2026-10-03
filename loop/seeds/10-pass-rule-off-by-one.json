@@ -1,0 +1,6 @@
+{
+ "file": "validator.py",
+ "old": "\"pass\": score == len(results)",
+ "new": "\"pass\": score >= len(results) - 1",
+ "defect": "A candidate passes with one condition failing (02 v0.3 gating)."
+}

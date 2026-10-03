@@ -23,17 +23,26 @@ def resolve_argv(argv: list[str], cwd: Path) -> list[str]:
     return [exe, *argv[1:]]
 
 
-def child_env(cfg: dict) -> dict:
+SECRETS = ("HF_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "REJECTS_REPO")
+
+
+def child_env(cfg: dict, keep_secrets: bool = False) -> dict:
+    """The orchestrator's environment for a child process, without SECRETS unless keep_secrets
+    (only the GPU test keeps them: run_batch.py may archive rejects)."""
     env = dict(os.environ, PYTHONUTF8="1")
+    if not keep_secrets:
+        env = {k: v for k, v in env.items() if k.upper() not in SECRETS}   # Windows names are case-blind
     for var, path in cfg.get("ca_env", {}).items():
         if os.path.exists(path):
             env.setdefault(var, path)
     return env
 
 
-def run(argv, cwd, cfg: dict | None = None, check=True, timeout=None, input=None):
+def run(argv, cwd, cfg: dict | None = None, check=True, timeout=None, input=None,
+        keep_secrets: bool = False, extra_env: dict | None = None):
+    env = {**child_env(cfg or {}, keep_secrets), **(extra_env or {})}
     p = subprocess.run(resolve_argv(as_argv(argv), Path(cwd)), cwd=cwd, capture_output=True,
-                       input=input, timeout=timeout, env=child_env(cfg or {}))
+                       input=input, timeout=timeout, env=env)
     out = p.stdout.decode("utf-8", "replace")
     err = p.stderr.decode("utf-8", "replace")
     if check and p.returncode != 0:

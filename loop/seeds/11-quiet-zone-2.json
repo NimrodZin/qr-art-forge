@@ -1,0 +1,6 @@
+{
+ "file": "qrbuild.py",
+ "old": "border=4",
+ "new": "border=2",
+ "defect": "Quiet zone 4 → 2 modules (02 control image)."
+}

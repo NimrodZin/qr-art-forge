@@ -32,13 +32,17 @@ long-pass = "claude-opus-5-5"
 scoped = "claude-sonnet-5"
 cheap = "claude-haiku-4-5-20251001"
 
-# 06 §3. A path ending in "/" is a prefix. The gate is the THE GATE line in app.py, ± gate_context lines.
+# 06 §3. A path ending in "/" is a prefix. The gate in app.py (as on base): the gate_functions'
+# whole bodies, every validator import line, and any gate_marker line ± gate_context lines.
 [never_economize]
 paths = ["validator.py", "qrbuild.py", "README.md", ".github/"]
 gate_file = "app.py"
-gate_marker = "THE GATE"
+gate_functions = ["run_forge", "forge"]
+gate_marker = ["THE GATE", "DISCLOSURE"]
 gate_context = 3
 
+# Child processes never see HF_TOKEN, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY, REJECTS_REPO
+# (loop/sh.py SECRETS), except the GPU test.
 # Set for pytest, the GPU test and sessions only if the file exists (AVG HTTPS interception on
 # the PC; local/REPORT-local.md §6).
 [ca_env]

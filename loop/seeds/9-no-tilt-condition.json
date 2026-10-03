@@ -1,0 +1,6 @@
+{
+ "file": "validator.py",
+ "old": "    out[\"tilt\"] = cv2.warpPerspective(img, M, (w, h), borderValue=(255, 255, 255))",
+ "new": "    pass  # tilt condition removed",
+ "defect": "The tilt condition is dropped; pass needs only full+small (02 v0.3)."
+}

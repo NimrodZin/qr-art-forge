@@ -2,6 +2,7 @@
 diff, UI strings, CI (and its failed log), budget."""
 from __future__ import annotations
 
+import ast
 import datetime
 import json
 import re
@@ -45,37 +46,86 @@ def wait_comfy_idle(cfg: dict, poll_s: float = 10.0) -> bool:
     return True
 
 
-def gpu_test(cfg: dict, repo) -> tuple[bool, int, str]:
-    """Real-generation test (06 §1a). Returns (pass, survivors, output tail)."""
-    rc, out, err = run(cfg["gpu_cmd"], repo, cfg, check=False, timeout=cfg.get("gpu_timeout_s"))
+class ComfyBusy(RuntimeError):
+    """ComfyUI stayed busy past comfy_wait_s before a GPU run: a stop, not a retry (06 §1a)."""
+
+
+def _gpu_run(cfg: dict, repo, label: str, env: dict | None) -> dict:
+    if not wait_comfy_idle(cfg):
+        raise ComfyBusy(f"before the {label} run")
+    rc, out, err = run(cfg["gpu_cmd"], repo, cfg, check=False, timeout=cfg.get("gpu_timeout_s"),
+                       keep_secrets=True, extra_env=env)
     found = re.findall(r"(\d+)/(\d+) passed", out)
     n = int(found[-1][0]) if found else 0
-    tail = "\n".join((out + err).strip().splitlines()[-12:])
-    return rc == 0 and n >= cfg["gpu_min_pass"], n, tail
+    return {"label": label, "pass": rc == 0 and n >= cfg["gpu_min_pass"], "n": n,
+            "tail": "\n".join((out + err).strip().splitlines()[-12:])}
+
+
+def gpu_test(cfg: dict, repo, env: dict | None = None) -> tuple[bool, int, str, list[dict]]:
+    """Real-generation test (06 §1a): gpu_cmd with the normal env, then again with `env` added if
+    given (the step's gpu_env). Pass iff every run reaches gpu_min_pass. Returns (pass, survivors,
+    output tail, runs); survivors and tail are the first failing run's, else the last run's; runs
+    holds {label, pass, n, tail} per run. Secrets are kept: run_batch.py may archive rejects.
+    Before each run ComfyUI must be idle within comfy_wait_s, else ComfyBusy."""
+    runs = [_gpu_run(cfg, repo, "default", None)]
+    if env:
+        runs.append(_gpu_run(cfg, repo, "with gpu_env", env))
+    ok = all(r["pass"] for r in runs)
+    key = next((r for r in runs if not r["pass"]), runs[-1])
+    return ok, key["n"], key["tail"], runs
+
+
+GATE_IMPORT = re.compile(r"^(from validator import|import validator)")
+VALIDATE_TOKEN = re.compile(r"\bvalidate\b")
+
+
+def gate_spans(source: str, functions) -> list[tuple[int, int]]:
+    """1-based [first, last] line ranges on `source` that are the gate: each def named in
+    `functions` (decorators included) and each validator import line. Raises SyntaxError if
+    `source` does not parse, LookupError if none of `functions` is defined."""
+    tree = ast.parse(source)
+    spans = [(min([n.lineno, *(d.lineno for d in n.decorator_list)]), n.end_lineno)
+             for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in functions]
+    if not spans:
+        raise LookupError(f"none of {list(functions)} defined")
+    return spans + [(i, i) for i, l in enumerate(source.splitlines(), 1) if GATE_IMPORT.match(l)]
 
 
 def touched_never_economize(cfg: dict, repo, base: str | None = None) -> list[str]:
-    """Never-economize paths in `git diff <base>...HEAD`, plus "app.py (THE GATE)" when a changed
-    line mentions the marker or a hunk lies within gate_context lines of it on base."""
+    """Never-economize paths in `git diff <base>...HEAD`, plus "app.py (gate)" when a hunk overlaps
+    a gate span on base (gate_spans: gate_functions, validator imports), a changed line mentions a
+    gate_marker or the token `validate` (e.g. a module-level rebinding), or a hunk lies within gate_context lines of a marker line on base. If base's gate
+    file cannot be parsed, any change to it is flagged (fail closed) and the label says why."""
     ne = cfg["never_economize"]
     base = base or cfg.get("base_branch", "main")
     names = git(repo, "diff", "--name-only", f"{base}...HEAD").split()
     hits = [n for n in names
             if any(n == p or (p.endswith("/") and n.startswith(p)) for p in ne["paths"])]
-    gf, marker, ctx = ne["gate_file"], ne["gate_marker"], ne.get("gate_context", 3)
+    gf, ctx = ne["gate_file"], ne.get("gate_context", 3)
+    markers = ne["gate_marker"]
+    markers = [markers] if isinstance(markers, str) else list(markers)
     if gf in names:
         diff = git(repo, "diff", "-U0", f"{base}...HEAD", "--", gf)
-        on_base = git(repo, "show", f"{base}:{gf}", check=False).splitlines()
-        gate_lines = [i + 1 for i, l in enumerate(on_base) if marker in l]
+        source = git(repo, "show", f"{base}:{gf}", check=False)
+        try:
+            spans = gate_spans(source, ne.get("gate_functions", []))
+        except (SyntaxError, ValueError, LookupError) as e:
+            hits.append(f"{gf} (gate: fail closed, {base}:{gf} unreadable: {type(e).__name__}: {e})")
+            return sorted(hits)
+        on_base = source.splitlines()
+        spans += [(i + 1 - ctx, i + 1 + ctx) for i, l in enumerate(on_base) if any(m in l for m in markers)]
+        # a changed line carrying a marker or the `validate` token (a line inside a span is a hit anyway)
         changed = [l for l in diff.splitlines()
-                   if l[:1] in "+-" and not l.startswith(("+++", "---")) and marker in l]
+                   if l[:1] in "+-" and not l.startswith(("+++", "---"))
+                   and (any(m in l for m in markers) or VALIDATE_TOKEN.search(l[1:]))]
         near = False
         for m in HUNK.finditer(diff):
             start, count = int(m[1]), int(m[2] if m[2] is not None else 1)
             lo, hi = (start, start + count - 1) if count else (start, start + 1)
-            near |= any(lo <= g + ctx and hi >= g - ctx for g in gate_lines)
+            near |= any(lo <= b and hi >= a for a, b in spans)
         if changed or near:
-            hits.append(f"{gf} ({marker})")
+            hits.append(f"{gf} (gate)")
     return sorted(hits)
 
 
