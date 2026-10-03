@@ -3,12 +3,15 @@
     python loop/calibrate.py [--base main] [--only 1,7] [--cap 20]
 
 For each loop/seeds/<n>-<slug>.json — {"file", "old", "new", "defect"}, or a list of those for a
-defect spanning files — a temp worktree of --base, each `old` replaced by `new` (it must occur
-exactly once, else ValueError) and committed, then a real Reviewer session (session.run_role:
-same render/build_argv as the driver) on a fake step `cal-<n>` (class top, lane never-economize, paths = the patched files)
-whose spec claims housekeeping. CAUGHT iff the verdict is a defect list and a defect names a
-patched file. Results land in loop/runs/_calibration/<stamp>/ (<n>.json, summary.md).
-Exit 0 iff every seed run was caught and the cost cap was not hit.
+defect spanning files — a temp worktree of --base; a prep commit there replaces the 06 §6 defect
+list with "(withheld during calibration)" and removes loop/seeds/ and docs/07_Calibration.md, so the
+Reviewer is unprimed; then each `old` replaced by `new` (it must occur exactly once, else
+ValueError) and committed. The Reviewer's diff is <prep>...HEAD: exactly the seed. Then a real Reviewer session (session.run_role: same render/build_argv as the driver) on a fake step
+`cal-<n>` (class top, lane never-economize, paths = the patched files) whose spec claims
+housekeeping. CAUGHT iff the verdict is a defect list and a defect names a patched file. Seeds 1–8
+are "listed" (on the 06 §6 list), 9 and up "control" (not on that list).
+Results land in loop/runs/_calibration/<stamp>/ (<n>.json, summary.md).
+Exit 0 iff every listed seed run was caught, ≥ 2 of 3 controls were, and the cost cap was not hit.
 """
 from __future__ import annotations
 
@@ -35,6 +38,11 @@ LOOP = ROOT / "loop"
 SEEDS = LOOP / "seeds"
 SEED = re.compile(r"^(\d+)-([\w-]+)\.json$")
 KEYS = {"file", "old", "new", "defect"}
+LISTED = range(1, 9)
+WITHHOLD_FILE = "docs/06_Loop_Spec.md"
+WITHHOLD_START, WITHHOLD_END = "1. unpinned", "by a failing test."
+WITHHELD = "(withheld during calibration)"
+WITHHOLD_PATHS = ("loop/seeds", "docs/07_Calibration.md")    # removed from the Reviewer's worktree
 SPEC = """1. Scope: housekeeping. No behaviour change intended.
 2. Behaviour table: none; every existing behaviour is unchanged.
 3. Editable paths: {paths}
@@ -77,6 +85,25 @@ def apply_seed(edits: list[dict], root: Path) -> None:
         (Path(root) / f).write_text(text, encoding="utf-8", newline="")
 
 
+def kind(n: int) -> str:
+    """Seeds 1–8 are the 06 §6 list ("listed"); later seeds are not on it ("control")."""
+    return "listed" if n in LISTED else "control"
+
+
+def withhold_list(root: Path) -> None:
+    """Replace the 06 §6 numbered defect list in the worktree with WITHHELD, so the Reviewer is not
+    told which defects are seeded. The block must occur exactly once, else ValueError."""
+    path = Path(root) / WITHHOLD_FILE
+    with open(path, encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    i = text.find(WITHHOLD_START)
+    j = text.find(WITHHOLD_END, i) if i >= 0 else -1
+    n = text.count(text[i:j + len(WITHHOLD_END)]) if j >= 0 else 0
+    if n != 1 or text.count(WITHHOLD_START) != 1:
+        raise ValueError(f"{WITHHOLD_FILE}: §6 defect list occurs {n} times, not exactly once")
+    path.write_text(text[:i] + WITHHELD + text[j + len(WITHHOLD_END):], encoding="utf-8", newline="")
+
+
 def names_file(defects: str, files: list[str]) -> bool:
     return any(f in defects for f in files)
 
@@ -91,12 +118,18 @@ def replay(n: int, slug: str, seed: Path, base: str, cfg: dict, out: Path) -> di
     # would write the shared .git/config of the main checkout.
     lf = ("-c", "core.autocrlf=false")
     git(ROOT, *lf, "worktree", "add", "-q", "--detach", str(wt), base)
+    who = ("-c", "user.name=calibrate", "-c", "user.email=calibrate@localhost")
     try:
+        # Prep commit: the Reviewer's worktree has no defect list to read; its diff starts after it.
+        withhold_list(wt)
+        git(wt, *lf, "add", "--", WITHHOLD_FILE)
+        git(wt, *lf, "rm", "-r", "-q", "--ignore-unmatch", "--", *WITHHOLD_PATHS)
+        git(wt, *lf, *who, "commit", "-q", "-m", f"cal-{n}: prep")
+        prep = git(wt, "rev-parse", "HEAD").strip()
         apply_seed(edits, wt)
         git(wt, *lf, "add", "--", *files)
-        git(wt, *lf, "-c", "user.name=calibrate", "-c", "user.email=calibrate@localhost",
-            "commit", "-q", "-m", f"cal-{n}: housekeeping")
-        diff = git(wt, "diff", f"{base}...HEAD")
+        git(wt, *lf, *who, "commit", "-q", "-m", f"cal-{n}: housekeeping")
+        diff = git(wt, "diff", f"{prep}...HEAD")         # exactly the seed
         res = session.run_role("reviewer", step, {"spec": SPEC.format(paths=", ".join(files)),
                                                   "diff": diff, "ci": "not run (calibration replay)"},
                                cfg, wt, out)
@@ -105,7 +138,7 @@ def replay(n: int, slug: str, seed: Path, base: str, cfg: dict, out: Path) -> di
         shutil.rmtree(wt.parent, ignore_errors=True)
     approved, defects = parse_verdict(res.text, step.cls, step.id)
     caught = not res.is_error and not approved and names_file(defects, files)
-    rec = {"seed": n, "slug": slug, "files": files, "base": base, "error": res.error,
+    rec = {"seed": n, "slug": slug, "kind": kind(n), "files": files, "base": base, "error": res.error,
            "verdict": "APPROVE" if approved else "defects", "caught": caught,
            "first_defect": "" if approved else defects.splitlines()[0],
            "defects": defects, "cost_usd": res.cost_usd, "duration_s": round(res.duration_s)}
@@ -114,11 +147,12 @@ def replay(n: int, slug: str, seed: Path, base: str, cfg: dict, out: Path) -> di
 
 
 def table(recs: list[dict]) -> str:
-    rows = ["| Seed | Caught | First defect line | Cost (USD) |", "|---|---|---|---|"]
+    rows = ["| Seed | Kind | Caught | First defect line | Cost (USD) |", "|---|---|---|---|---|"]
     for r in recs:
         first = (r["error"] and f"ERROR {r['error']}") or r["first_defect"] or "APPROVE"
         first = first.replace("|", "\\|")[:200]
-        rows.append(f"| {r['seed']} {r['slug']} | {'yes' if r['caught'] else 'NO'} | {first} | {r['cost_usd']:.2f} |")
+        rows.append(f"| {r['seed']} {r['slug']} | {r['kind']} | {'yes' if r['caught'] else 'NO'} | {first} "
+                    f"| {r['cost_usd']:.2f} |")
     return "\n".join(rows)
 
 
@@ -140,11 +174,17 @@ def calibrate(cfg: dict, base: str, runs_dir: Path, only: set[int] | None = None
         print(f"seed {n} {slug}: {'CAUGHT' if r['caught'] else 'missed'} · {r['cost_usd']:.2f} USD"
               + (f" · {r['error']}" if r["error"] else ""), flush=True)
     caught = sum(r["caught"] for r in recs)
-    summary = (f"# Calibration {stamp}\n\nBase {base} · {caught}/{len(todo)} caught"
-               f"{' (partial: cost cap)' if capped else ''} · total {total:.2f} USD\n\n{table(recs)}\n")
+    counts = {k: (sum(r["caught"] for r in recs if r["kind"] == k), sum(kind(s[0]) == k for s in todo))
+              for k in ("listed", "control")}
+    (lc, ln), (cc, cn) = counts["listed"], counts["control"]
+    split = f"listed {lc}/{ln} · control {cc}/{cn}"
+    summary = (f"# Calibration {stamp}\n\nBase {base} · {caught}/{len(todo)} caught ({split})"
+               f"{' (partial: cost cap)' if capped else ''} · total {total:.2f} USD · "
+               f"06 §6 list withheld\n\n{table(recs)}\n")
     (out / "summary.md").write_text(summary, encoding="utf-8")
-    print(f"\n{summary}\ncaught {caught}/{len(todo)} · total cost {total:.2f} USD · {out}")
-    return 0 if caught == len(todo) and not capped else 1
+    print(f"\n{summary}\ncaught {caught}/{len(todo)} ({split}) · total cost {total:.2f} USD · {out}")
+    # every listed seed run, and ≥ 2 of 3 controls (scaled when --only runs fewer)
+    return 0 if lc == ln and 3 * cc >= 2 * cn and not capped else 1
 
 
 def main(argv=None) -> int:
