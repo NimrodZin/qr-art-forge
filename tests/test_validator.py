@@ -231,3 +231,31 @@ def test_v3_phone_decode_returns_early_on_first_hit(monkeypatch):
     img = cv2.cvtColor(np.array(make_qr(PAY)), cv2.COLOR_RGB2BGR)
     assert validator._phone_decode(img, PAY) is True
     assert len(calls) == 1
+
+
+def test_soften_levels_are_pairwise_different_and_levels_are_1_2():
+    assert validator.SOFTEN_LEVELS == (1, 2)
+    img = np.zeros((768, 768, 3), np.uint8)
+    img[:, 384:] = 255
+    s0 = validator._soften(img, 0)
+    s1 = validator._soften(img, 1)
+    s2 = validator._soften(img, 2)
+    assert not np.array_equal(s0, s1)
+    assert not np.array_equal(s0, s2)
+    assert not np.array_equal(s1, s2)
+
+
+def test_decode_cv_on_blank_image_returns_empty():
+    blank = np.full((768, 768, 3), 200, np.uint8)
+    assert validator._decode_cv(blank) == ""
+
+
+def test_decode_cv_on_clean_qr_returns_payload():
+    img = cv2.cvtColor(np.array(make_qr(PAY)), cv2.COLOR_RGB2BGR)
+    assert validator._decode_cv(img) == PAY
+
+
+@pytest.mark.parametrize("binarizer", validator.BINARIZERS)
+def test_zx_read_on_blank_image_returns_empty(binarizer):
+    blank = np.full((768, 768, 3), 200, np.uint8)
+    assert validator._zx_read(blank, binarizer) == ""
