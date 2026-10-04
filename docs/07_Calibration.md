@@ -61,4 +61,4 @@ zone = 4), 7 (SOFTEN_LEVELS), 12, 13, 18 (cv/zx decoders on blank and clean imag
 Replay: 8/8 listed and 3/3 controls, unprimed, one full run — met.
 Mutation: 100 % of non-equivalent killed, every survivor triaged, every gap closed — met.
 
-Verdict (Nimrod): yes — 2026-10-03, planner chat; lane opened in PR #<fill in>.
+Verdict (Nimrod): yes — 2026-10-03, planner chat; lane opened in PR #23.
