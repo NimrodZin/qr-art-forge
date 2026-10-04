@@ -1,4 +1,4 @@
-# 06 — Loop Spec v0.5 (2026-10-03)
+# 06 — Loop Spec v0.6 (2026-10-03)
 
 The automated build loop for QR Art Forge. Runs on Nimrod's Windows PC (RTX 4070) in `E:\qr-art-forge`, on his Claude subscription, via `claude -p`; the Mac is courier only. GitHub for PRs and CI. Nothing here overrides 00–05; where they conflict, 00–05 win.
 
@@ -41,7 +41,7 @@ Unavailability rule (from 00): ordinary work may move one class up or down and t
 - **Ordinary** (not on the never-economize list): merges automatically on `approve` + CI green.
 - **Never-economize** (`validator.py`, `qrbuild.py`, `README.md` front-matter, `.github/`, the gallery gate in `app.py`): stops at PR-ready with label `needs-nimrod` until §6 calibration is met; thereafter merges automatically.
 
-The Architect names the lane in the spec; the orchestrator refuses to auto-merge if the diff touches a never-economize path, any hunk inside `run_forge()`/`forge()`, the validator import, or any changed line mentioning `validate` or a gate marker in `app.py`, whether or not the spec named it. (`README.md` is protected whole, stricter than "front-matter".)
+The Architect names the lane in the spec. Never-economize-lane steps auto-merge only while `open = true` in config (set after 07's verdict) and only when every never-economize path, gate span, validator import, `validate` token or marker line the diff touches is a path the spec named; anything else stops with needs-nimrod. Ordinary-lane steps stop on any such hit. (`README.md` is protected whole, stricter than "front-matter".)
 
 ## 4. Where Nimrod is
 
@@ -84,3 +84,4 @@ After every merge the orchestrator writes `docs/STATE.md`: `Main at <hash> · ph
 - v0.3.1 (2026-09-29) — model verified from modelUsage; header advisory; 40 USD. Provenance: loop runs m2-5 tester-1 and m2-6 implementer-1 (good sessions stopped on header).
 - v0.4 (2026-09-29) — suite after commit; CI log to Implementer; no-change stop; UI flag; seeds as exact edits. Provenance: loop run m2-6, PR #19.
 - v0.5 (2026-10-03) — gpu_env + double GPU run; secrets stripped from sessions and pytest; gate = run_forge/forge spans + validate token; unprimed calibration with control seeds 9–11; mutation bar on non-equivalent mutants. Provenance: planner audit F2–F4, chat 2026-10-03; PR #21.
+- v0.6 (2026-10-03) — never-economize lane opened (config open=true) on 07 v0.2 verdict yes. Provenance: Nimrod, planner chat 2026-10-03, PR #<fill in>.

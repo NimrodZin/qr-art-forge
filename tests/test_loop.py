@@ -575,6 +575,105 @@ def test_driver_needs_nimrod_when_diff_touches_validator(cfg, repo, tmp_path):
     assert "needs-nimrod" in log and "validator.py" in log
 
 
+# never-economize lane (06 §3 v0.6): open in config + every hit named by the step's paths
+
+NE = ORDINARY.replace("lane=ordinary", "lane=never-economize")
+
+
+@pytest.mark.parametrize("lane, paths, hits, is_open, refused", [
+    ("never-economize", ["validator.py", "tests/"], ["validator.py"], True, ""),                # (b) path
+    ("never-economize", ["app.py", "tests/"], ["app.py (gate)"], True, ""),                     # (b) gate
+    ("never-economize", [".github/", "tests/"], [".github/workflows/ci.yml"], True, ""),        # prefix
+    ("never-economize", ["app.py"], [], True, ""),                                              # no hit
+    ("never-economize", ["validator.py"], ["validator.py"], False, "lane closed"),
+    ("never-economize", ["validator.py"], ["validator.py"], None, "lane closed"),              # key absent
+    ("never-economize", ["validator.py"], ["validator.py"], "true", "lane closed"),            # not a bool
+    ("never-economize", ["app.py"], [], False, "lane closed"),
+    ("never-economize", ["validator.py"], ["qrbuild.py", "validator.py"], True, "not named in the spec: qrbuild.py"),
+    ("never-economize", [".github"], [".github/w.yml"], True, "not named in the spec: .github/w.yml"),
+    ("never-economize", ["validator"], ["validator.py"], True, "not named in the spec: validator.py"),
+    ("ordinary", ["validator.py", "tests/"], ["validator.py"], True, "diff touches never-economize validator.py"),
+    ("ordinary", ["app.py"], [], True, ""),
+])
+def test_merge_refusal(cfg, lane, paths, hits, is_open, refused):
+    ne = {k: v for k, v in cfg["never_economize"].items() if k != "open"}
+    if is_open is not None:
+        ne["open"] = is_open
+    got = L("run").merge_refusal(_step(lane=lane, paths=paths), hits, dict(cfg, never_economize=ne))
+    assert (refused in got) if refused else got == ""
+
+
+@pytest.mark.parametrize("lane", ["never-economize", "ordinary"])
+def test_merge_refusal_fail_closed_gate_refused_even_when_named(cfg, lane):
+    hit = "app.py (gate: fail closed, main:app.py unreadable: SyntaxError: invalid syntax)"
+    got = L("run").merge_refusal(_step(lane=lane, paths=["app.py", "tests/"]), [hit], cfg)
+    assert cfg["never_economize"]["open"] is True
+    assert got == "app.py gate span unresolved (base did not parse)"
+
+
+def test_driver_stops_never_economize_step_on_fail_closed_gate(cfg, repo, tmp_path):
+    work = repo(NE)                                     # paths=app.py,tests/ — app.py is named
+    (work / "app.py").write_text("def forge(:\n")       # base app.py does not parse
+    sh(work, "git", "commit", "-q", "-am", "broken base")
+    sh(work, "git", "push", "-q", "origin", "main")
+    assert drive(cfg, work, tmp_path) == 1
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert not any(a[:2] == ["pr", "merge"] for a in gh)
+    assert ["pr", "edit", "7", "--add-label", "needs-nimrod"] in gh
+    assert "app.py gate span unresolved (base did not parse)" in _issue_body(tmp_path)
+
+
+def test_config_opens_the_never_economize_lane(cfg):
+    assert cfg["never_economize"]["open"] is True       # 07 v0.2 verdict yes (Nimrod, 2026-10-03)
+
+
+def test_driver_merges_never_economize_step_when_open_and_named(cfg, repo, tmp_path):
+    work = repo(NE.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
+    assert drive(cfg, work, tmp_path) == 0
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert ["pr", "merge", "7", "--squash", "--delete-branch"] in gh
+    assert not any("needs-nimrod" in a for a in gh)
+    assert "hits named in the spec: validator.py" in log_text(tmp_path)
+
+
+def test_driver_merges_never_economize_gate_hit_when_app_named(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(L("gates"), "touched_never_economize", lambda *a, **k: ["app.py (gate)"])
+    work = repo(NE)
+    assert drive(cfg, work, tmp_path) == 0
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert ["pr", "merge", "7", "--squash", "--delete-branch"] in gh
+
+
+def test_driver_stops_never_economize_step_when_lane_closed(cfg, repo, tmp_path):
+    cfg["never_economize"] = dict(cfg["never_economize"], open=False)
+    work = repo(NE.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
+    assert drive(cfg, work, tmp_path) == 1
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert not any(a[:2] == ["pr", "merge"] for a in gh)
+    assert ["pr", "edit", "7", "--add-label", "needs-nimrod"] in gh
+    assert "lane closed" in _issue_body(tmp_path) and "lane closed" in log_text(tmp_path)
+
+
+def test_driver_stops_never_economize_step_on_unnamed_hit(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(L("gates"), "touched_never_economize",
+                        lambda *a, **k: [".github/workflows/ci.yml", "validator.py"])
+    work = repo(NE.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
+    assert drive(cfg, work, tmp_path) == 1
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert not any(a[:2] == ["pr", "merge"] for a in gh)
+    assert ["pr", "edit", "7", "--add-label", "needs-nimrod"] in gh
+    assert "not named in the spec: .github/workflows/ci.yml)" in _issue_body(tmp_path)   # validator.py is named
+
+
+def test_driver_ordinary_step_with_hit_still_stops_when_lane_open(cfg, repo, tmp_path):
+    assert cfg["never_economize"]["open"] is True
+    work = repo(ORDINARY.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
+    assert drive(cfg, work, tmp_path) == 1
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    assert not any(a[:2] == ["pr", "merge"] for a in gh)
+    assert "diff touches never-economize validator.py" in _issue_body(tmp_path)
+
+
 def test_driver_stops_after_two_consecutive_red_reviews(cfg, repo, tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_REVIEW", "defects")
     work = repo()

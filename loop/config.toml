@@ -35,7 +35,9 @@ cheap = "claude-haiku-4-5-20251001"
 # 06 §3. A path ending in "/" is a prefix. The gate in app.py (as on base): the gate_functions'
 # whole bodies, every validator import line, and any gate_marker line ± gate_context lines.
 [never_economize]
-paths = ["validator.py", "qrbuild.py", "README.md", ".github/"]
+# Never-economize-lane steps auto-merge only while open = true and every hit is in the step's paths.
+open = true                 # set by Nimrod after 07 v0.2 verdict yes, 2026-10-03; false closes the lane again
+paths =["validator.py", "qrbuild.py", "README.md", ".github/"]
 gate_file = "app.py"
 gate_functions = ["run_forge", "forge"]
 gate_marker = ["THE GATE", "DISCLOSURE"]
