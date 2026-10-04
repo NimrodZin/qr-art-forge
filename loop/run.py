@@ -4,8 +4,9 @@
 
 Per step: Architect → Tester (red on main) → [Implementer → commit → suite (red: tail to the next
 attempt, no push) → push/PR → CI (red: failed log to the next attempt) → Reviewer] × attempts →
-GPU test if touches_gpu → merge (ordinary lane, APPROVE, CI green, no never-economize path)
-or stop PR-ready with needs-nimrod. An implementer that changes nothing stops the step. UI strings
+GPU test if touches_gpu → merge (APPROVE, CI green, and either ordinary lane with no
+never-economize hit, or never-economize lane with config open = true and every hit named in the
+step's paths) or stop PR-ready with needs-nimrod. An implementer that changes nothing stops the step. UI strings
 in app.py flag the PR (body section + label `ui-change`). Any stop opens/appends issue `loop: needs-nimrod <id>`.
 A role may stop instead (06 §1): `BLOCKED: <reason>` first (after the header, if given), or for the
 Architect a non-empty 'Blocking questions' section; the step stops there and the reply goes into the issue.
@@ -45,6 +46,29 @@ class Stop(Exception):
 
 def within(path: str, allowed: list[str]) -> bool:
     return any(path == a.rstrip("/") or path.startswith(a.rstrip("/") + "/") for a in allowed)
+
+
+def named(hit: str, paths: list[str]) -> bool:
+    """A never-economize hit ("validator.py", "app.py (gate)", …) is named by the step's paths,
+    with the prefix rule of gates.touched_never_economize: equal, or a path ending in "/" prefixes it."""
+    path = hit.split(" (", 1)[0]
+    return any(path == p or (p.endswith("/") and path.startswith(p)) for p in paths)
+
+
+def merge_refusal(step, hits: list[str], cfg: dict) -> str:
+    """Why the step may not auto-merge (06 §3), or "" if it may. Ordinary lane: any hit refuses.
+    Never-economize lane: refused unless `[never_economize] open = true` and every hit is named.
+    A fail-closed gate hit (base app.py did not parse) is refused in either lane, named or not."""
+    if any("(gate: fail closed" in h for h in hits):
+        return "app.py gate span unresolved (base did not parse)"
+    if step.lane == "ordinary":
+        return "diff touches never-economize " + ", ".join(hits) if hits else ""
+    if cfg["never_economize"].get("open") is not True:
+        return f"lane={step.lane}, lane closed (config never_economize.open is not true)"
+    unnamed = [h for h in hits if not named(h, step.paths)]
+    if unnamed:
+        return f"lane={step.lane}, diff touches never-economize not named in the spec: " + ", ".join(unnamed)
+    return ""
 
 
 def parse_verdict(text: str, cls: str, step_id: str) -> tuple[bool, str]:
@@ -294,10 +318,12 @@ class Driver:
                 raise Stop(f"real-generation test {n}/4 (< {self.cfg['gpu_min_pass']}/4):\n{tail}")
 
         hits = gates.touched_never_economize(self.cfg, self.repo, self.base)
-        if step.lane != "ordinary" or hits:
+        why = merge_refusal(step, hits, self.cfg)
+        if why:
             _, _, err = gh(self.cfg, self.repo, "pr", "edit", self.pr, "--add-label", "needs-nimrod", check=False)
-            why = f"lane={step.lane}" if step.lane != "ordinary" else "diff touches never-economize " + ", ".join(hits)
             raise Stop(f"needs-nimrod: PR-ready, not auto-merged ({why})")
+        if hits:
+            self.log(step, "never-economize lane open · hits named in the spec: " + ", ".join(hits))
 
         # 04 queue flip + STATE ride on the PR branch (ruling 10a), then CI again, then merge.
         queue.mark_done(step.id, self.pr_url, self.repo / PLAN)
