@@ -5,7 +5,7 @@ import json
 import os
 import random
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Mapping
 
 import gradio as gr
 from PIL import Image
@@ -36,6 +36,13 @@ def make_scheduler(config: dict):
         config, use_karras_sigmas=True, algorithm_type="dpmsolver++")
 
 
+def vae_slicing_enabled(device: str, env: Mapping[str, str] | None = None) -> bool:
+    """P5: VAE slicing on CUDA behind QRAF_VAE_SLICING=1, default off."""
+    if env is None:
+        env = os.environ
+    return device == "cuda" and env.get("QRAF_VAE_SLICING") == "1"
+
+
 def _load_pipes() -> dict:
     import torch
     from diffusers import (ControlNetModel, StableDiffusionControlNetPipeline,
@@ -49,6 +56,8 @@ def _load_pipes() -> dict:
     i2i = StableDiffusionControlNetImg2ImgPipeline(**pipe.components)
     pipe.to(device)
     i2i.to(device)
+    if vae_slicing_enabled(device):
+        pipe.enable_vae_slicing()  # P5
 
     def gen(prompt, control, n, weight, steps, cfg, seed, negative=NEG):
         gens = [torch.Generator(device).manual_seed(seed + i) for i in range(n)]
