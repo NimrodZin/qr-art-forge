@@ -1,4 +1,4 @@
-# 03 — Decisions v0.4 (2026-09-29)
+# 03 — Decisions v0.5 (2026-10-07)
 
 Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidence) · Provisional (built on; flagged when a task exposes a reason to revisit) · Open (never silently resolved; a dependent task names it and takes the smallest hedge) · Superseded (kept, with pointer).
 
@@ -15,7 +15,7 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 - P2 Default QR strength (ControlNet conditioning scale) 1.35.
 - P3 768 px wide output; 768 × 1024 once the bleed canvas lands (Nimrod, issue #15, 'C, a').
 - P4 Owner-only reject archive to a private HF dataset (M1.5); disclosure line in UI. Nimrod: keep (chat 2026-09-23).
-- P5 VAE slicing on CUDA (≤ 2/255 pixel change; validator runs on final pixels). Off by default until the loop measures pass rate with it on. Provenance: local/REPORT-local.md §4.
+- P5 VAE slicing on CUDA (≤ 2/255 pixel change; validator runs on final pixels). DECIDED 2026-10-07: ON by default, QRAF_VAE_SLICING=0 disables. m2-7 GPU gate: default decode of 4x768 peaks 12.7 GB reserved on the 4070 and spills to host RAM (752 s); with slicing 6.0 GB, 22.5 s; 4/4 pass both. Provenance: local/REPORT-local.md §4.
 
 ## Open
 - O1 Repair method for v2: DiffQRCoder-style gradient repair vs img2img rescue. Blocks nothing in v1; affects M2 spec.
@@ -27,3 +27,4 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 - v0.2 (2026-09-23) — D3 updated, D6, P4 added.
 - v0.3 (2026-09-26) — D3 → 02 v0.3; D2 note; P5; O2 options; D5 host → PC.
 - v0.4 (2026-09-29) — P3: 768 × 1024 with the bleed canvas. Provenance: Nimrod on issue #15, 'C, a' (https://github.com/NimrodZin/qr-art-forge/issues/15#issuecomment-5888012097).
+- v0.5 (2026-10-07) - P5 decided: VAE slicing on by default. Provenance: m2-7 GPU gate runs (loop/runs/m2-7, hand runs 2026-10-07), Nimrod in planner chat 2026-10-07.
