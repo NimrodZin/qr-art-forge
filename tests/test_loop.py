@@ -135,14 +135,19 @@ def test_queue_rejects_bad_class(tmp_path):
 
 def test_real_build_plan_queue_parses():
     steps = L("queue").parse_queue((ROOT / "docs" / "04_Build_Plan.md").read_text(encoding="utf-8"))
-    assert [s.id for s in steps][:3] == ["m2-6", "m2-7", "m2-5"]
-    assert steps[0].paths == ["app.py", "tests/"] and not steps[0].touches_gpu
-    assert (steps[0].cls, steps[0].lane) == ("scoped", "ordinary")          # the pilot (06 §7)
-    assert steps[0].done and not steps[1].done                               # m2-7: the unattended proof (M2.9)
-    assert (steps[1].cls, steps[1].lane, steps[1].touches_gpu) == ("scoped", "ordinary", True)
-    assert (steps[2].cls, steps[2].lane) == ("top", "never-economize")      # bleed canvas, issue #15
-    assert steps[0].gpu_env == {} and steps[2].gpu_env == {}
-    assert steps[1].gpu_env == {"QRAF_VAE_SLICING": "1"}                    # m2-7: P5 flag, second GPU run
+    ids = [s.id for s in steps]
+    by = {s.id: s for s in steps}                                            # by id: the Merger flips boxes
+    m26, m27, m27b, m25 = by["m2-6"], by["m2-7"], by["m2-7b"], by["m2-5"]
+    assert m26.paths == ["app.py", "tests/"] and not m26.touches_gpu
+    assert (m26.cls, m26.lane) == ("scoped", "ordinary")                     # the pilot (06 §7)
+    assert m26.done and m27.done                                             # m2-7: the unattended proof (M2.9)
+    assert (m27.cls, m27.lane, m27.touches_gpu) == ("scoped", "ordinary", True)
+    assert m27.gpu_env == {"QRAF_VAE_SLICING": "1"}                          # m2-7: P5 flag, second GPU run
+    assert (m27b.cls, m27b.lane, m27b.touches_gpu) == ("scoped", "ordinary", True)
+    assert m27b.gpu_env == {"QRAF_VAE_SLICING": "0"}                         # m2-7b: P5 default on; done not asserted
+    assert (m25.cls, m25.lane) == ("top", "never-economize")                 # bleed canvas, issue #15
+    assert m26.gpu_env == {} and m25.gpu_env == {}
+    assert ids.index("m2-7b") < ids.index("m2-5")
 
 
 # (a2) M2.10 gpu_env ------------------------------------------------------------------------

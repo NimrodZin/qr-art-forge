@@ -37,10 +37,10 @@ def make_scheduler(config: dict):
 
 
 def vae_slicing_enabled(device: str, env: Mapping[str, str] | None = None) -> bool:
-    """P5: VAE slicing on CUDA behind QRAF_VAE_SLICING=1, default off."""
+    """P5 (decided 2026-10-07): VAE slicing on CUDA by default; QRAF_VAE_SLICING=0 disables."""
     if env is None:
         env = os.environ
-    return device == "cuda" and env.get("QRAF_VAE_SLICING") == "1"
+    return device == "cuda" and env.get("QRAF_VAE_SLICING") != "0"
 
 
 def _load_pipes() -> dict:
