@@ -18,7 +18,13 @@ gpu_min_pass = 2
 gpu_timeout_s = 1800
 
 comfy_url = "http://127.0.0.1:8188"
-comfy_wait_s = 600          # wait this long for ComfyUI's queue to empty, then stop
+comfy_wait_s = 600          # wait this long for ComfyUI's queue to empty and the GPU to be free, then stop
+
+# GPU preflight (06 §5): before a GPU step's Architect, and again before each GPU run, nvidia-smi
+# must show at least gpu_min_free_mb MiB free and at most gpu_max_util % utilization.
+nvidia_smi_cmd = ["nvidia-smi"]
+gpu_min_free_mb = 7000      # the slicing path peaks ~6 GB reserved; idle desktop holds ~2.4 GB of the 12.3 GB
+gpu_max_util = 10
 ci_timeout_s = 1200
 ci_poll_s = 30
 

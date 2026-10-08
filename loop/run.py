@@ -11,6 +11,8 @@ in app.py flag the PR (body section + label `ui-change`). Any stop opens/appends
 A role may stop instead (06 §1): `BLOCKED: <reason>` first (after the header, if given), or for the
 Architect a non-empty 'Blocking questions' section; the step stops there and the reply goes into the issue.
 A session's model is verified from its JSON modelUsage; the header line is advisory.
+Preflight (before the Architect): caps, budget, clean base, `claude --version` runs, and for GPU
+steps nvidia-smi shows the GPU free (gates.gpu_free). CI is awaited on the pushed head SHA.
 """
 from __future__ import annotations
 
@@ -24,11 +26,12 @@ import argparse
 import datetime
 import json
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 
 from loop import config, gates, queue, session
-from loop.sh import gh, git, run
+from loop.sh import as_argv, gh, git, run
 
 ROOT = Path(__file__).resolve().parent.parent
 LOOP = ROOT / "loop"
@@ -166,6 +169,10 @@ class Driver:
     def push(self, branch: str) -> None:
         git(self.repo, "push", "-q", "-u", "origin", branch)
 
+    def head(self) -> str:
+        """The SHA just pushed: CI is awaited on it, never on the PR's earlier checks (issue #28)."""
+        return git(self.repo, "rev-parse", "HEAD").strip()
+
     @property
     def pr(self) -> str:
         return self.pr_url.rstrip("/").rsplit("/", 1)[-1]
@@ -233,6 +240,23 @@ class Driver:
         self.check_budget()
         if git(self.repo, "branch", "--show-current").strip() != self.base or self.changed():
             raise Stop(f"repo not on a clean {self.base}")
+        self.claude_version(step)
+        if step.touches_gpu:        # before the Architect: a busy GPU costs no session money
+            ok, detail = gates.gpu_free(self.cfg)
+            if not ok:
+                raise Stop(f"GPU busy before start: {detail}")
+            self.log(step, f"GPU free before start · {detail}")
+
+    def claude_version(self, step) -> None:
+        """`claude --version` with the stripped env must run; its version line goes to the log."""
+        try:
+            rc, out, err = run([*as_argv(self.cfg["claude_cmd"]), "--version"], self.repo, self.cfg,
+                               check=False, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise Stop(f"claude not runnable: {e}")
+        if rc != 0:
+            raise Stop(f"claude not runnable: exit {rc}: {(err.strip() or out.strip())[:300]}")
+        self.log(step, "claude --version · " + next((l.strip() for l in out.splitlines() if l.strip()), "(no output)"))
 
     def run_step(self, step) -> None:
         self.pr_url, self.ui = None, []
@@ -288,9 +312,10 @@ class Driver:
                 continue
             self.log(step, f"suite green after commit · {tail.splitlines()[-1] if tail else ''}")
             self.publish(step, branch, spec_file)
-            ci = gates.ci_green(self.pr, self.cfg, self.repo)
+            sha = self.head()
+            ci = gates.ci_green(self.pr, self.cfg, self.repo, sha)
             self.log(step, f"CI {'green' if ci else 'red/timeout'}")
-            ci_log = "" if ci else gates.ci_failed_log(branch, self.cfg, self.repo, 60)
+            ci_log = "" if ci else gates.ci_failed_log(branch, self.cfg, self.repo, sha, 60)
             diff = git(self.repo, "diff", f"{self.base}...HEAD")
             rev = self.session("reviewer", step, {"spec": spec, "diff": diff,
                                                   "ci": "green" if ci else "RED or timed out"}, attempt)
@@ -310,6 +335,8 @@ class Driver:
         if step.touches_gpu:
             try:                        # gpu_test waits for an idle ComfyUI before each run
                 ok, n, tail, runs = gates.gpu_test(self.cfg, self.repo, step.gpu_env)
+            except gates.GpuBusy as e:
+                raise Stop(f"GPU busy for {self.cfg['comfy_wait_s']}s; GPU test not run ({e})")
             except gates.ComfyBusy as e:
                 raise Stop(f"ComfyUI busy for {self.cfg['comfy_wait_s']}s; GPU test not run ({e})")
             self.log(step, "GPU test " + " · ".join(f"{r['label']} {r['n']}/4" for r in runs)
@@ -334,7 +361,7 @@ class Driver:
             encoding="utf-8")
         self.commit([PLAN.as_posix(), "docs/STATE.md"], "queue + state", step)
         self.push(branch)
-        if not gates.ci_green(self.pr, self.cfg, self.repo):
+        if not gates.ci_green(self.pr, self.cfg, self.repo, self.head()):
             raise Stop("CI red after the queue/state commit")
         gh(self.cfg, self.repo, "pr", "merge", self.pr, "--squash", "--delete-branch")
         git(self.repo, "checkout", "-q", self.base)
@@ -400,7 +427,7 @@ def run_loop(cfg: dict, repo, runs_dir, once: bool = False) -> int:
 
 def dry_run(cfg: dict, once: bool) -> int:
     """Run on a temp clone of the current HEAD (as `main`) whose origin is a temp bare repo, with
-    fake claude, fake gh and a stub GPU test. Nothing leaves the machine; logs land in
+    fake claude, fake gh, a stub nvidia-smi (GPU free) and a stub GPU test. Nothing leaves the machine; logs land in
     loop/runs/_dryrun/<stamp>/."""
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     runs_dir = LOOP / "runs" / "_dryrun" / stamp
@@ -422,6 +449,7 @@ def dry_run(cfg: dict, once: bool) -> int:
                gh_cmd=os.environ.get("LOOP_GH_CMD") or [py, str(LOOP / "fake_gh.py")],
                pytest_cmd=[py, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
                gpu_cmd=[py, "-c", "print('4/4 passed. (dry-run stub for local/run_batch.py)')"],
+               nvidia_smi_cmd=[py, "-c", "print('0, 12282, 0')"],
                ci_poll_s=1, comfy_wait_s=min(cfg["comfy_wait_s"], 60))
     print(f"dry-run: HEAD {head[:7]} as main · clone {work} · origin {bare} · logs {runs_dir}")
     rc = run_loop(cfg, work, runs_dir, once)

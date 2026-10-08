@@ -1,6 +1,7 @@
 """Fake `gh` for tests/test_loop.py and `run.py --dry-run`: records calls, touches nothing remote.
 
-Env: FAKE_GH_LOG (append one JSON line per call) · FAKE_GH_CHECKS=pass|fail|pending (default pass) ·
+Env: FAKE_GH_LOG (append one JSON line per call) · FAKE_GH_CHECKS=pass|fail|pending (default pass;
+`pr checks` buckets and `run list --commit` status/conclusion) ·
 FAKE_GH_NO_LABEL=<name> (`pr edit --add-label <name>` fails until `label create <name>` is in the log).
 """
 import json
@@ -25,6 +26,10 @@ elif argv[:2] == ["pr", "edit"] and missing and argv[-2:] == ["--add-label", mis
         and ["label", "create", missing] not in [a[:3] for a in earlier]:
     print(f"could not add label: '{missing}' not found", file=sys.stderr)
     sys.exit(1)
+elif argv[:2] == ["run", "list"] and "--commit" in argv:
+    state = {"pass": ("completed", "success"), "fail": ("completed", "failure"), "pending": ("in_progress", "")}
+    status, conclusion = state[os.environ.get("FAKE_GH_CHECKS", "pass")]
+    print(json.dumps([{"databaseId": 4242, "status": status, "conclusion": conclusion}]))
 elif argv[:2] == ["run", "list"]:
     print(json.dumps([{"databaseId": 4242}]))
 elif argv[:2] == ["run", "view"]:
