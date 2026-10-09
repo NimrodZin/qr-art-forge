@@ -86,4 +86,4 @@ After every merge the orchestrator writes `docs/STATE.md`: `Main at <hash> · ph
 - v0.4 (2026-09-29) — suite after commit; CI log to Implementer; no-change stop; UI flag; seeds as exact edits. Provenance: loop run m2-6, PR #19.
 - v0.5 (2026-10-03) — gpu_env + double GPU run; secrets stripped from sessions and pytest; gate = run_forge/forge spans + validate token; unprimed calibration with control seeds 9–11; mutation bar on non-equivalent mutants. Provenance: planner audit F2–F4, chat 2026-10-03; PR #21.
 - v0.6 (2026-10-03) — never-economize lane opened (config open=true) on 07 v0.2 verdict yes. Provenance: Nimrod, planner chat 2026-10-03, PR #23.
-- v0.7 (2026-10-08) — preflight guards; CI keyed on head SHA. Provenance: issues #26, #28; planner chat 2026-10-08; PR #<fill in>.
+- v0.7 (2026-10-08) — preflight guards; CI keyed on head SHA. Provenance: issues #26, #28; planner chat 2026-10-08; PR #29.
