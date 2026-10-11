@@ -32,4 +32,5 @@ The never-economize list is never downgraded.
 - [x] m2-6 · Negative prompt field under Advanced (OD 9) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=no · https://github.com/NimrodZin/qr-art-forge/pull/19
 - [x] m2-7 · VAE slicing on CUDA behind env flag, default off (P5) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes · gpu_env=QRAF_VAE_SLICING=1 · https://github.com/NimrodZin/qr-art-forge/pull/25
 - [x] m2-7b · VAE slicing on by default (P5 decided); QRAF_VAE_SLICING=0 turns it off · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes · gpu_env=QRAF_VAE_SLICING=0 · https://github.com/NimrodZin/qr-art-forge/pull/27
+- [ ] m2-9 · Reference image — IP-Adapter style reference under Advanced (OD 8); never stored, archive JSON records reference:true/false only (P6); default generation without a reference stays byte-identical · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes
 - [ ] m2-5 · Bleed canvas — 768×1024 control image, code centred, model paints beyond it (OD 6.1); needs 02 v0.4 approval · class=top · lane=never-economize · paths=qrbuild.py,app.py,tests/ · touches_gpu=yes
