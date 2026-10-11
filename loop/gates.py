@@ -1,17 +1,18 @@
-"""Gates the driver checks before and after sessions: ComfyUI idle, GPU test, never-economize
-diff, UI strings, CI (and its failed log), budget."""
+"""Gates the driver checks before and after sessions: ComfyUI idle, GPU free, GPU test,
+never-economize diff, UI strings, CI on the pushed head SHA (and its failed log), budget."""
 from __future__ import annotations
 
 import ast
 import datetime
 import json
 import re
+import subprocess
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from loop.sh import gh, git, run
+from loop.sh import as_argv, gh, git, run
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", re.M)
 UI_FILE = "app.py"
@@ -37,22 +38,60 @@ def comfy_idle(url: str, timeout: float = 3.0) -> bool:
         return False
 
 
-def wait_comfy_idle(cfg: dict, poll_s: float = 10.0) -> bool:
+NVIDIA_QUERY = ["--query-gpu=memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"]
+
+
+def gpu_free(cfg: dict) -> tuple[bool, str]:
+    """(ok, detail) from nvidia-smi (cfg nvidia_smi_cmd): ok iff the first GPU has at least
+    gpu_min_free_mb MiB free and utilization at most gpu_max_util %. nvidia-smi missing, failing
+    or unparsable → (False, why)."""
+    min_free, max_util = cfg.get("gpu_min_free_mb", 7000), cfg.get("gpu_max_util", 10)
+    try:
+        rc, out, err = run([*as_argv(cfg.get("nvidia_smi_cmd", ["nvidia-smi"])), *NVIDIA_QUERY], ".", cfg,
+                           check=False, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"nvidia-smi not runnable: {e}"
+    if rc != 0:
+        return False, f"nvidia-smi exit {rc}: {(err.strip() or out.strip())[:200]}"
+    line = next((l for l in out.splitlines() if l.strip()), "")
+    try:
+        used, total, util = (float(x) for x in line.split(","))
+    except ValueError:
+        return False, f"nvidia-smi output unparsable: {line[:200]!r}"
+    free = total - used
+    detail = (f"{free:.0f} MiB free of {total:.0f} (need ≥ {min_free}), "
+              f"utilization {util:.0f} % (need ≤ {max_util})")
+    return free >= min_free and util <= max_util, detail
+
+
+def wait_gpu_ready(cfg: dict, poll_s: float = 10.0) -> tuple[str, str]:
+    """Wait up to comfy_wait_s for ComfyUI idle and gpu_free, in one loop with one deadline.
+    ("", "") when ready; else ("comfy", "") or ("gpu", gpu_free's detail) for what was still busy."""
     deadline = time.monotonic() + cfg["comfy_wait_s"]
-    while not comfy_idle(cfg["comfy_url"]):
-        if time.monotonic() >= deadline:
-            return False
+    while True:
+        busy = ("comfy", "")
+        if comfy_idle(cfg["comfy_url"]):
+            ok, detail = gpu_free(cfg)
+            busy = ("", "") if ok else ("gpu", detail)
+        if not busy[0] or time.monotonic() >= deadline:
+            return busy
         time.sleep(poll_s)
-    return True
 
 
 class ComfyBusy(RuntimeError):
     """ComfyUI stayed busy past comfy_wait_s before a GPU run: a stop, not a retry (06 §1a)."""
 
 
+class GpuBusy(ComfyBusy):
+    """The GPU (nvidia-smi) stayed busy past comfy_wait_s before a GPU run: a stop, not a retry."""
+
+
 def _gpu_run(cfg: dict, repo, label: str, env: dict | None) -> dict:
-    if not wait_comfy_idle(cfg):
+    what, detail = wait_gpu_ready(cfg)
+    if what == "comfy":
         raise ComfyBusy(f"before the {label} run")
+    if what == "gpu":
+        raise GpuBusy(f"before the {label} run: {detail}")
     rc, out, err = run(cfg["gpu_cmd"], repo, cfg, check=False, timeout=cfg.get("gpu_timeout_s"),
                        keep_secrets=True, extra_env=env)
     found = re.findall(r"(\d+)/(\d+) passed", out)
@@ -66,7 +105,8 @@ def gpu_test(cfg: dict, repo, env: dict | None = None) -> tuple[bool, int, str, 
     given (the step's gpu_env). Pass iff every run reaches gpu_min_pass. Returns (pass, survivors,
     output tail, runs); survivors and tail are the first failing run's, else the last run's; runs
     holds {label, pass, n, tail} per run. Secrets are kept: run_batch.py may archive rejects.
-    Before each run ComfyUI must be idle within comfy_wait_s, else ComfyBusy."""
+    Before each run ComfyUI must be idle and the GPU free (gpu_free) within comfy_wait_s, else
+    ComfyBusy, or GpuBusy naming the GPU."""
     runs = [_gpu_run(cfg, repo, "default", None)]
     if env:
         runs.append(_gpu_run(cfg, repo, "with gpu_env", env))
@@ -136,30 +176,41 @@ def ui_strings(repo, base: str) -> list[str]:
             if l.startswith("+") and not l.startswith("+++") and UI_STRING.search(l)]
 
 
-def ci_failed_log(branch: str, cfg: dict, repo=".", n: int = 60) -> str:
-    """Last n lines of `gh run view <latest run on branch> --log-failed`."""
-    _, out, err = gh(cfg, repo, "run", "list", "--branch", branch, "--limit", "1", "--json", "databaseId",
+def ci_failed_log(branch: str, cfg: dict, repo, head_sha: str, n: int = 60) -> str:
+    """Last n lines of `gh run view <run> --log-failed`, the run taken from `gh run list --commit
+    <head_sha>` (a failed one first), so a red attempt never shows the previous push's log."""
+    _, out, err = gh(cfg, repo, "run", "list", "--commit", head_sha, "--json", "databaseId,status,conclusion",
                      check=False)
     try:
-        run_id = json.loads(out or "[]")[0]["databaseId"]
-    except (ValueError, IndexError, KeyError, TypeError):
-        return f"(no CI run found for {branch}: {err.strip()[:200] or out.strip()[:200]})"
+        runs = [r for r in json.loads(out or "[]") if isinstance(r, dict) and "databaseId" in r]
+        failed = [r for r in runs if r.get("status") == "completed"
+                  and r.get("conclusion") not in ("success", "skipped")]
+        run_id = (failed or runs)[0]["databaseId"]
+    except (ValueError, IndexError, TypeError):
+        return (f"(no CI run found for {branch} at {head_sha[:12]}: "
+                f"{err.strip()[:200] or out.strip()[:200]})")
     _, out, err = gh(cfg, repo, "run", "view", str(run_id), "--log-failed", check=False)
     return tail(out + err, n) or f"(run {run_id}: no failed-step log)"
 
 
-def ci_green(pr, cfg: dict, repo=".") -> bool:
-    """Poll `gh pr checks` until nothing is pending: True iff all pass/skipping (and ≥ 1 pass)."""
+def ci_green(pr, cfg: dict, repo, head_sha: str) -> bool:
+    """CI for the pushed commit `head_sha` itself, never the PR's earlier checks (issue #28): poll
+    `gh run list --commit <head_sha>` until at least one run exists and all are completed. True iff
+    every conclusion is success or skipped; a completed run with any other conclusion (failure,
+    cancelled, …) → False at once; ci_timeout_s → False. `pr` is the PR the SHA was pushed to."""
     deadline = time.monotonic() + cfg["ci_timeout_s"]
     while True:
-        _, out, _ = gh(cfg, repo, "pr", "checks", str(pr), "--json", "name,bucket", check=False)
+        _, out, _ = gh(cfg, repo, "run", "list", "--commit", head_sha, "--json", "status,conclusion",
+                       check=False)
         try:
-            buckets = {c.get("bucket") for c in json.loads(out or "[]")}
+            runs = json.loads(out or "[]")
         except ValueError:
-            buckets = set()
-        if buckets & {"fail", "cancel"}:
+            runs = []
+        runs = [r for r in runs if isinstance(r, dict)] if isinstance(runs, list) else []
+        done = [r for r in runs if r.get("status") == "completed"]
+        if any(r.get("conclusion") not in ("success", "skipped") for r in done):
             return False
-        if "pass" in buckets and buckets <= {"pass", "skipping"}:
+        if runs and len(done) == len(runs):
             return True
         if time.monotonic() >= deadline:
             return False

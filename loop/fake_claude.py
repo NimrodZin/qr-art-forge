@@ -9,7 +9,7 @@ FAKE_MODEL=<id>[,<id>…] (modelUsage reports these instead of the --model argum
 FAKE_TESTER_NONE=1 (tester writes nothing) · FAKE_IMPL_NOOP=1 (implementer changes nothing) ·
 FAKE_IMPL_RED=first|always (implementer's edit leaves the suite red on its first / every attempt) ·
 FAKE_IMPL_UI=1 (implementer also adds app.py lines with label=, placeholder=, gr.Markdown() ·
-FAKE_COST (default 0.01).
+FAKE_COST (default 0.01). `--version` prints a version line and exits 0 (driver preflight).
 """
 import json
 import os
@@ -25,6 +25,9 @@ def field(prompt, name):
 
 
 def main():
+    if "--version" in sys.argv[1:]:
+        print("0.0.0 (fake claude)")
+        return
     prompt = sys.stdin.buffer.read().decode("utf-8")
     role = field(prompt, "Role").lower()
     step_id = field(prompt, "Step id")

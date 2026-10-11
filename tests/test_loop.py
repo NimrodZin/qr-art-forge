@@ -38,6 +38,7 @@ Steps: prose, not queue.
 - nothing
 """
 
+GPU_FREE = "500, 12282, 3"            # nvidia-smi: used MiB, total MiB, utilization %
 ORDINARY = "t-1 · Fake ordinary step · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=no"
 
 
@@ -88,6 +89,7 @@ def cfg(tmp_path, monkeypatch):
     c.update(claude_cmd=[sys.executable, FAKE_CLAUDE], gh_cmd=[sys.executable, FAKE_GH],
              pytest_cmd=[sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
              gpu_cmd=[sys.executable, "-c", "print('3/4 passed. Encoded: x')"],
+             nvidia_smi_cmd=[sys.executable, "-c", f"print({GPU_FREE!r})"],
              ci_poll_s=0, ci_timeout_s=0, comfy_wait_s=0, comfy_url="http://127.0.0.1:9",
              ca_env={})
     return c
@@ -826,7 +828,7 @@ def test_driver_suite_red_after_commit_goes_back_without_push(cfg, repo, tmp_pat
     assert "test_loopfake" in second and "failed" in second                 # the red suite's tail is the defect list
     gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
     assert sum(a[:2] == ["pr", "create"] for a in gh) == 1
-    assert sum(a[:2] == ["pr", "checks"] for a in gh) == 2                 # attempt 2 + queue/state, none for 1
+    assert sum(a[:2] == ["run", "list"] and "--commit" in a for a in gh) == 2   # attempt 2 + queue/state, none for 1
     order = _order(tmp_path)
     red = next(i for i, l in enumerate(order) if l.startswith("suite red after commit"))
     pr = next(i for i, l in enumerate(order) if l.startswith("PR "))
@@ -862,9 +864,10 @@ def test_driver_ci_red_sends_failed_log_to_implementer(cfg, repo, tmp_path, monk
     work = repo()
     assert drive(cfg, work, tmp_path) == 1
     gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
-    runs = [a for a in gh if a[:2] == ["run", "list"]]
-    assert runs and _flag(runs[0], "--branch") == "loop/t-1"
-    assert ["run", "view", "4242", "--log-failed"] in gh                    # the latest run id from `run list`
+    pushed = sh(work, "git", "rev-parse", "loop/t-1~1").strip()            # attempt 1's implementation commit
+    logs = [a for a in gh if a[:2] == ["run", "list"] and "databaseId" in _flag(a, "--json")]
+    assert logs and _flag(logs[0], "--commit") == pushed and all("--branch" not in a for a in logs)
+    assert ["run", "view", "4242", "--log-failed"] in gh                    # the run id from `run list --commit`
     second = [c for c in calls(tmp_path, "claude.jsonl") if c["role"] == "implementer"][1]["stdin_prompt"]
     assert "fake failed log line 99" in second and "fake failed log line 40" in second
     assert "fake failed log line 39" not in second                           # last 60 lines only
@@ -1161,10 +1164,277 @@ def test_real_app_parses_with_both_gate_functions(cfg):
     assert any(s[0] == s[1] for s in spans)                             # `from validator import ...`
 
 
-def test_ci_green_reads_buckets(cfg, monkeypatch):
+def test_ci_green_reads_runs_of_the_commit(cfg, monkeypatch):
     g = L("gates")
-    assert g.ci_green(7, cfg) is True
+    assert g.ci_green(7, cfg, ".", "abc123") is True
     monkeypatch.setenv("FAKE_GH_CHECKS", "fail")
-    assert g.ci_green(7, cfg) is False
+    assert g.ci_green(7, cfg, ".", "abc123") is False
     monkeypatch.setenv("FAKE_GH_CHECKS", "pending")
-    assert g.ci_green(7, cfg) is False                              # timeout 0 → not green
+    assert g.ci_green(7, cfg, ".", "abc123") is False               # timeout 0 → not green
+
+
+# (h) m2-13: CI keyed on the pushed head SHA (issue #28) ---------------------------------------
+
+CI_GH = """
+import json, sys
+from pathlib import Path
+a = sys.argv[1:]
+state = Path({state!r})
+s = json.loads(state.read_text())
+if a[:2] == ["pr", "checks"]:
+    print(json.dumps([{{"name": "test", "bucket": "pass"}}]))     # the PR's (stale) checks are green
+    sys.exit(0)
+s["calls"].append(a)
+state.write_text(json.dumps(s))
+sha = a[a.index("--commit") + 1]
+polls = sum(1 for c in s["calls"] if c[c.index("--commit") + 1] == sha)
+print(json.dumps(s["runs"].get(sha, []) if polls > s.get("hide", 0) else []))
+"""
+
+
+def _ci_gh(cfg, tmp_path, runs, hide=0):
+    """gh whose `run list --commit <sha>` answers `runs[sha]`, after `hide` empty polls of that sha."""
+    state = tmp_path / "ci_state.json"
+    state.write_text(json.dumps({"runs": runs, "hide": hide, "calls": []}))
+    script = tmp_path / "ci_gh.py"
+    script.write_text(CI_GH.format(state=str(state)))
+    cfg["gh_cmd"] = [sys.executable, str(script)]
+    return lambda: json.loads(state.read_text())["calls"]
+
+
+GREEN = [{"status": "completed", "conclusion": "success"}]
+
+
+def test_ci_green_ignores_stale_green_checks_of_the_previous_commit(cfg, tmp_path, monkeypatch):
+    g = L("gates")
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    calls_ = _ci_gh(cfg, tmp_path, {"old-sha": GREEN})                 # nothing for new-sha yet
+    cfg.update(ci_timeout_s=0.5, ci_poll_s=0)
+    assert g.ci_green(7, cfg, ".", "new-sha") is False
+    assert calls_() and all(c[:2] == ["run", "list"] and c[c.index("--commit") + 1] == "new-sha"
+                            for c in calls_())
+
+
+def test_ci_green_waits_for_a_run_that_appears_after_two_polls(cfg, tmp_path, monkeypatch):
+    g = L("gates")
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    calls_ = _ci_gh(cfg, tmp_path, {"new-sha": GREEN + [{"status": "completed", "conclusion": "skipped"}]},
+                    hide=2)
+    cfg.update(ci_timeout_s=30, ci_poll_s=0)
+    assert g.ci_green(7, cfg, ".", "new-sha") is True
+    assert len(calls_()) == 3
+
+
+@pytest.mark.parametrize("runs,polls", [
+    ([{"status": "in_progress", "conclusion": ""}, {"status": "completed", "conclusion": "failure"}], 1),
+    ([{"status": "completed", "conclusion": "cancelled"}], 1),
+])
+def test_ci_green_fail_or_cancel_is_false_at_once(cfg, tmp_path, monkeypatch, runs, polls):
+    g = L("gates")
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    calls_ = _ci_gh(cfg, tmp_path, {"sha": runs})
+    cfg.update(ci_timeout_s=30, ci_poll_s=0)
+    assert g.ci_green(7, cfg, ".", "sha") is False
+    assert len(calls_()) == polls
+
+
+def test_ci_green_pending_run_waits_until_timeout(cfg, tmp_path, monkeypatch):
+    g = L("gates")
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    calls_ = _ci_gh(cfg, tmp_path, {"sha": GREEN + [{"status": "queued", "conclusion": ""}]})
+    cfg.update(ci_timeout_s=0.5, ci_poll_s=0)
+    assert g.ci_green(7, cfg, ".", "sha") is False
+    assert len(calls_()) > 1
+
+
+def test_driver_awaits_ci_on_each_pushed_head(cfg, repo, tmp_path):
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 0
+    shas = [c["argv"][c["argv"].index("--commit") + 1] for c in calls(tmp_path, "gh.jsonl")
+            if c["argv"][:2] == ["run", "list"] and "--commit" in c["argv"]]
+    bare = tmp_path / "origin.git"
+    head = sh(bare, "git", "rev-parse", "loop/t-1").strip()            # the queue/state push
+    impl = sh(bare, "git", "rev-parse", "loop/t-1~1").strip()          # the implementation push
+    assert shas == [impl, head]
+
+
+# (i) m2-13: preflight — claude --version, GPU free (issue #26) ---------------------------------
+
+@pytest.mark.parametrize("smi,ok,why", [
+    (GPU_FREE, True, "11782 MiB free"),
+    ("6000, 12282, 0", False, "6282 MiB free"),                       # busy by memory
+    ("500, 12282, 55", False, "utilization 55 %"),                    # busy by utilization
+    ("garbage", False, "unparsable"),
+])
+def test_gpu_free(cfg, smi, ok, why):
+    cfg["nvidia_smi_cmd"] = [sys.executable, "-c", f"print({smi!r})"]
+    got, detail = L("gates").gpu_free(cfg)
+    assert got is ok and why in detail
+
+
+def test_gpu_free_thresholds_from_config(cfg):
+    cfg.update(nvidia_smi_cmd=[sys.executable, "-c", "print('5000, 12282, 20')"],
+               gpu_min_free_mb=7000, gpu_max_util=25)
+    assert L("gates").gpu_free(cfg)[0] is True
+
+
+def test_gpu_free_missing_binary(cfg):
+    cfg["nvidia_smi_cmd"] = ["no-such-nvidia-smi-m2-13"]
+    ok, detail = L("gates").gpu_free(cfg)
+    assert ok is False and "nvidia-smi not runnable" in detail
+
+
+def test_gpu_free_nonzero_exit(cfg):
+    cfg["nvidia_smi_cmd"] = [sys.executable, "-c", "import sys; print('NVML failed', file=sys.stderr); sys.exit(9)"]
+    ok, detail = L("gates").gpu_free(cfg)
+    assert ok is False and "exit 9" in detail and "NVML failed" in detail
+
+
+def test_config_gpu_preflight_defaults():
+    c = L("config").load_config()
+    assert (c["nvidia_smi_cmd"], c["gpu_min_free_mb"], c["gpu_max_util"]) == (["nvidia-smi"], 7000, 10)
+
+
+GPU_STEP = ORDINARY.replace("touches_gpu=no", "touches_gpu=yes")
+
+
+@pytest.mark.parametrize("smi,why", [
+    ("6000, 12282, 0", "6282 MiB free"), ("500, 12282, 55", "utilization 55 %"), (None, "not runnable")])
+def test_driver_stops_gpu_step_before_architect_when_gpu_busy(cfg, repo, tmp_path, smi, why):
+    work = repo(GPU_STEP)
+    cfg["nvidia_smi_cmd"] = [sys.executable, "-c", f"print({smi!r})"] if smi else ["no-such-nvidia-smi-m2-13"]
+    assert drive(cfg, work, tmp_path) == 1
+    log = log_text(tmp_path)
+    assert "STOP · GPU busy before start: " in log and why in log
+    assert calls(tmp_path, "claude.jsonl") == []                        # no session money spent
+    assert "step start" not in log
+
+
+def test_driver_skips_gpu_preflight_for_non_gpu_step(cfg, repo, tmp_path):
+    work = repo()
+    cfg["nvidia_smi_cmd"] = ["no-such-nvidia-smi-m2-13"]
+    assert drive(cfg, work, tmp_path) == 0
+    assert "GPU" not in log_text(tmp_path)
+
+
+def test_driver_logs_gpu_free_for_gpu_step(cfg, repo, tmp_path):
+    work = repo(GPU_STEP)
+    assert drive(cfg, work, tmp_path) == 0
+    assert "GPU free before start · 11782 MiB free" in log_text(tmp_path)
+
+
+def _gpu_free_script(monkeypatch, answers):
+    """gates.gpu_free answers in order (then free); returns the list of calls."""
+    g, seen, it = L("gates"), [], iter(answers)
+
+    def fake(cfg):
+        seen.append(1)
+        return next(it, (True, "free"))
+    monkeypatch.setattr(g, "gpu_free", fake)
+    return seen
+
+
+def test_gpu_test_waits_for_gpu_within_the_deadline(cfg, repo, monkeypatch):
+    g = L("gates")
+    work = repo()
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    cfg["comfy_wait_s"] = 30
+    seen = _gpu_free_script(monkeypatch, [(False, "busy"), (False, "busy")])
+    assert g.gpu_test(cfg, work)[0] is True
+    assert len(seen) == 3
+
+
+def test_gpu_test_gpu_busy_past_deadline_stops_without_running(cfg, repo, tmp_path):
+    g = L("gates")
+    work = repo()
+    marker = tmp_path / "ran.txt"
+    cfg["gpu_cmd"] = [sys.executable, "-c", f"open({str(marker)!r}, 'w'); print('3/4 passed.')"]
+    cfg["nvidia_smi_cmd"] = [sys.executable, "-c", "print('11000, 12282, 90')"]
+    with pytest.raises(g.GpuBusy, match="before the default run: .*utilization 90 %"):
+        g.gpu_test(cfg, work)
+    assert not marker.exists()
+
+
+def test_driver_stops_when_gpu_busy_before_a_gpu_run(cfg, repo, tmp_path, monkeypatch):
+    work = repo(GPU_STEP)
+    _gpu_free_script(monkeypatch, [(True, "free at preflight"), (False, "1 MiB free of 12282")])
+    assert drive(cfg, work, tmp_path) == 1
+    log = log_text(tmp_path)
+    assert "GPU busy for 0s; GPU test not run (before the default run: 1 MiB free of 12282)" in log
+    assert "GPU test default" not in log and "merged" not in log
+
+
+CLAUDE_V = """import os, runpy, sys
+if "--version" in sys.argv:
+    print("9.9.9 (Claude Code) token=" + os.environ.get("HF_TOKEN", "none"))
+    sys.exit(0)
+runpy.run_path({fake!r}, run_name="__main__")
+"""
+
+
+def test_driver_logs_claude_version_from_stripped_env(cfg, repo, tmp_path, secrets):
+    work = repo()
+    script = tmp_path / "claude_v.py"
+    script.write_text(CLAUDE_V.format(fake=FAKE_CLAUDE))
+    cfg["claude_cmd"] = [sys.executable, str(script)]
+    assert drive(cfg, work, tmp_path) == 0
+    assert "claude --version · 9.9.9 (Claude Code) token=none" in log_text(tmp_path)
+
+
+def test_fake_claude_answers_version():
+    out = subprocess.run([sys.executable, FAKE_CLAUDE, "--version"], capture_output=True, text=True,
+                         stdin=subprocess.DEVNULL, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip()
+
+
+@pytest.mark.parametrize("cmd,why", [
+    (["no-such-claude-m2-13"], "claude not runnable: "),
+    ([sys.executable, "-c", "import sys; print('auth expired', file=sys.stderr); sys.exit(3)"],
+     "claude not runnable: exit 3: auth expired"),
+])
+def test_driver_stops_when_claude_not_runnable(cfg, repo, tmp_path, cmd, why):
+    work = repo()
+    cfg["claude_cmd"] = cmd
+    assert drive(cfg, work, tmp_path) == 1
+    log = log_text(tmp_path)
+    assert f"STOP · {why}" in log and "step start" not in log
+    assert calls(tmp_path, "claude.jsonl") == []
+
+
+FAILED_LOG_GH = """
+import json, sys
+a = sys.argv[1:]
+runs = {runs!r}
+if a[:2] == ["run", "list"]:
+    print(json.dumps(runs.get(a[a.index("--commit") + 1], [])))
+elif a[:2] == ["run", "view"]:
+    print("log of run " + a[2])
+"""
+
+
+def _failed_log_gh(cfg, tmp_path, runs):
+    script = tmp_path / "failed_log_gh.py"
+    script.write_text(FAILED_LOG_GH.format(runs=runs))
+    cfg["gh_cmd"] = [sys.executable, str(script)]
+
+
+def test_ci_failed_log_reads_the_run_of_the_head_sha(cfg, tmp_path):
+    _failed_log_gh(cfg, tmp_path, {
+        "old-sha": [{"databaseId": 1, "status": "completed", "conclusion": "failure"}],
+        "new-sha": [{"databaseId": 2, "status": "completed", "conclusion": "success"},
+                    {"databaseId": 3, "status": "completed", "conclusion": "failure"}]})
+    g = L("gates")
+    assert g.ci_failed_log("loop/t-1", cfg, ".", "new-sha") == "log of run 3"      # the failed run of new-sha
+    assert "no CI run found for loop/t-1 at none-yet" in g.ci_failed_log("loop/t-1", cfg, ".", "none-yet")
+
+
+def test_driver_ci_failed_log_uses_the_pushed_sha(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_GH_CHECKS", "fail")
+    work = repo()
+    assert drive(cfg, work, tmp_path) == 1
+    gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
+    waited = [_flag(a, "--commit") for a in gh if a[:2] == ["run", "list"] and _flag(a, "--json") == "status,conclusion"]
+    logged = [_flag(a, "--commit") for a in gh if a[:2] == ["run", "list"] and "databaseId" in _flag(a, "--json")]
+    first, second = (sh(work, "git", "rev-parse", f"loop/t-1~{i}").strip() for i in (1, 0))
+    assert waited == logged == [first, second]                         # each attempt's log is its own push's
+
