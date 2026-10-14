@@ -15,6 +15,10 @@ from validator import validate, summary_line
 
 BASE = os.environ.get("BASE_MODEL", "Lykon/dreamshaper-8")
 CN = "monster-labs/control_v1p_sd15_qrcode_monster"
+IPA_REPO = "h94/IP-Adapter"
+IPA_SUBFOLDER = "models"
+IPA_WEIGHT = "ip-adapter_sd15.bin"
+REF_SCALE = 0.5
 NEG = ("ugly, disfigured, low quality, blurry, nsfw, text, watermark, "
        "flat, grid, checkerboard, monochrome squares")
 
@@ -59,18 +63,42 @@ def _load_pipes() -> dict:
     if vae_slicing_enabled(device):
         pipe.enable_vae_slicing()  # P5
 
-    def gen(prompt, control, n, weight, steps, cfg, seed, negative=NEG):
-        gens = [torch.Generator(device).manual_seed(seed + i) for i in range(n)]
-        return pipe(prompt=prompt, negative_prompt=negative, image=control,
-                    num_images_per_prompt=n, controlnet_conditioning_scale=weight,
-                    num_inference_steps=steps, guidance_scale=cfg, generator=gens,
-                    width=SIZE, height=SIZE).images
+    ip_loaded = False
 
-    def rescue(prompt, image, control, weight, steps, cfg, seed, negative=NEG):
-        return i2i(prompt=prompt, negative_prompt=negative, image=image, control_image=control,
-                   strength=0.35, controlnet_conditioning_scale=min(2.0, weight + 0.5),
-                   num_inference_steps=max(12, steps // 2), guidance_scale=cfg,
-                   generator=torch.Generator(device).manual_seed(seed)).images[0]
+    def _apply_reference(kwargs, reference, reference_scale):
+        """P6: the reference image is used for this call and then forgotten — not kept here."""
+        nonlocal ip_loaded
+        if reference is not None:
+            if not ip_loaded:
+                pipe.load_ip_adapter(IPA_REPO, subfolder=IPA_SUBFOLDER, weight_name=IPA_WEIGHT)
+                i2i.image_encoder = pipe.image_encoder
+                i2i.feature_extractor = pipe.feature_extractor
+                ip_loaded = True
+            pipe.set_ip_adapter_scale(float(reference_scale))
+            kwargs["ip_adapter_image"] = reference
+        elif ip_loaded:
+            pipe.unload_ip_adapter()
+            i2i.image_encoder = None
+            ip_loaded = False
+
+    def gen(prompt, control, n, weight, steps, cfg, seed, negative=NEG,
+           reference=None, reference_scale=REF_SCALE):
+        gens = [torch.Generator(device).manual_seed(seed + i) for i in range(n)]
+        kwargs = dict(prompt=prompt, negative_prompt=negative, image=control,
+                      num_images_per_prompt=n, controlnet_conditioning_scale=weight,
+                      num_inference_steps=steps, guidance_scale=cfg, generator=gens,
+                      width=SIZE, height=SIZE)
+        _apply_reference(kwargs, reference, reference_scale)
+        return pipe(**kwargs).images
+
+    def rescue(prompt, image, control, weight, steps, cfg, seed, negative=NEG,
+              reference=None, reference_scale=REF_SCALE):
+        kwargs = dict(prompt=prompt, negative_prompt=negative, image=image, control_image=control,
+                      strength=0.35, controlnet_conditioning_scale=min(2.0, weight + 0.5),
+                      num_inference_steps=max(12, steps // 2), guidance_scale=cfg,
+                      generator=torch.Generator(device).manual_seed(seed))
+        _apply_reference(kwargs, reference, reference_scale)
+        return i2i(**kwargs).images[0]
 
     return {"gen": gen, "rescue": rescue}
 
@@ -86,8 +114,10 @@ def get_pipes() -> dict:
 # ---------------------------------------------------------------- reject archive (owner-only diagnostics)
 def build_reject_records(payload: str, settings: dict,
                          entries: list[tuple[str, Image.Image, dict]],
-                         now: datetime | None = None) -> list[tuple[str, bytes, dict]]:
-    """Pure: (label, image, validate-result) → (runs/<run_id>/<label>.png, png_bytes, meta)."""
+                         now: datetime | None = None, *,
+                         reference: bool = False) -> list[tuple[str, bytes, dict]]:
+    """Pure: (label, image, validate-result) → (runs/<run_id>/<label>.png, png_bytes, meta).
+    P6: reference is recorded as a bare flag only — no pixels, hash or size."""
     now = now or datetime.now(timezone.utc)
     run_id = now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{settings['seed']}"
     records = []
@@ -95,7 +125,8 @@ def build_reject_records(payload: str, settings: dict,
         buf = io.BytesIO()
         im.save(buf, format="PNG")
         meta = {"run_id": run_id, "label": label, "payload": payload, "settings": settings,
-                "pass": v["pass"], "score": v["score"], "max": v["max"], "results": v["results"]}
+                "pass": v["pass"], "score": v["score"], "max": v["max"], "results": v["results"],
+                "reference": bool(reference)}
         records.append((f"runs/{run_id}/{label}.png", buf.getvalue(), meta))
     return records
 
@@ -134,17 +165,20 @@ def build_negative(extra: str | None) -> str:
 
 def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: int,
               cfg: float, rescue: bool, seed: int, pipes: dict | None = None,
-              progress: Callable | None = None, negative: str = ""):
+              progress: Callable | None = None, negative: str = "",
+              reference=None, reference_scale: float = REF_SCALE):
     """Pure function: returns (survivors, report, control). Gate rule lives here."""
     pipes = pipes or get_pipes()
     payload, warn = normalize_payload(payload_raw)
     control = make_qr(payload)
     seed = int(seed) if seed >= 0 else random.randint(0, 2**31 - 1)
     neg = build_negative(negative)
+    ref_kwargs = {"reference": reference, "reference_scale": float(reference_scale)} \
+        if reference is not None else {}
     if progress:
         progress(0.05, desc="Generating batch")
     imgs = pipes["gen"](prompt, control, int(batch), float(weight), int(steps), float(cfg), seed,
-                        negative=neg)
+                        negative=neg, **ref_kwargs)
 
     survivors, report, rejects = [], [], []
     for i, im in enumerate(imgs):
@@ -156,7 +190,7 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
             rejects.append((f"seed{seed+i}", im, v))
         if not v["pass"] and rescue and v["score"] >= 1:
             im2 = pipes["rescue"](prompt, im, control, float(weight), int(steps), float(cfg), seed + i,
-                                  negative=neg)
+                                  negative=neg, **ref_kwargs)
             v2 = validate(im2, payload)
             tag += " → rescue " + summary_line(v2)
             if v2["pass"]:
@@ -173,22 +207,25 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
     header += "Always test on a real phone before publishing.\n\n"
     settings = {"prompt": prompt, "batch": int(batch), "weight": float(weight),
                 "steps": int(steps), "cfg": float(cfg), "rescue": bool(rescue), "seed": seed}
-    report.append(archive_rejects(build_reject_records(payload, settings, rejects)))
+    report.append(archive_rejects(build_reject_records(payload, settings, rejects,
+                                                       reference=reference is not None)))
     return survivors, header + "\n".join(report), control
 
 
 @GPU(duration=120)
-def forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative="", progress=gr.Progress()):
+def forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative="",
+         reference=None, reference_scale=REF_SCALE, progress=gr.Progress()):
     try:
         return run_forge(payload, prompt, batch, weight, steps, cfg, rescue, seed,
-                         progress=progress, negative=negative)
+                         progress=progress, negative=negative,
+                         reference=reference, reference_scale=reference_scale)
     except PayloadError as e:
         raise gr.Error(str(e))
 
 
 # ---------------------------------------------------------------- UI
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="QR Art Forge") as demo:
+    with gr.Blocks(title="QR Art Forge", delete_cache=(3600, 3600)) as demo:
         gr.Markdown("# QR Art Forge\n"
                     "Aesthetic QR codes a human sees as a picture and a phone reads as a link. "
                     "Every result shown has been read by a phone-grade decoder under three scan conditions.")
@@ -205,6 +242,10 @@ def build_ui() -> gr.Blocks:
                     cfg = gr.Slider(4, 12, value=7, step=0.5, label="Guidance (CFG)")
                     negative_box = gr.Textbox(label="Negative prompt (added to the built-in list)",
                                               lines=2, value="", placeholder="e.g. people, hands, red")
+                    reference_img = gr.Image(label="Style reference image (optional)", type="pil",
+                                             sources=["upload"], height=160)
+                    reference_strength = gr.Slider(0.0, 1.0, value=REF_SCALE, step=0.05,
+                                                   label="Reference strength")
                     rescue = gr.Checkbox(value=True, label="Rescue near-misses")
                     seed = gr.Number(value=-1, label="Seed (-1 = random)", precision=0)
                 go = gr.Button("Forge", variant="primary")
@@ -213,7 +254,8 @@ def build_ui() -> gr.Blocks:
                 gallery = gr.Gallery(label="Scannable results", columns=2, height=560, format="png")
                 report = gr.Textbox(label="Scan report", lines=8)
                 ctrl = gr.Image(label="Control image used", height=200)
-        go.click(forge, [payload, prompt, batch, weight, steps, cfg, rescue, seed, negative_box],
+        go.click(forge, [payload, prompt, batch, weight, steps, cfg, rescue, seed, negative_box,
+                        reference_img, reference_strength],
                  [gallery, report, ctrl])
         gr.Markdown("**Tips** — keep payloads short; subjects with strong light/dark structure hide the "
                     "code best; if nothing passes, raise QR strength by 0.2 and retry.")
