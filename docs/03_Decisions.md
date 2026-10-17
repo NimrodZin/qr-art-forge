@@ -1,4 +1,4 @@
-# 03 — Decisions v0.6 (2026-10-11)
+# 03 — Decisions v0.7 (2026-10-17)
 
 Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidence) · Provisional (built on; flagged when a task exposes a reason to revisit) · Open (never silently resolved; a dependent task names it and takes the smallest hedge) · Superseded (kept, with pointer).
 
@@ -30,3 +30,4 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 - v0.4 (2026-09-29) — P3: 768 × 1024 with the bleed canvas. Provenance: Nimrod on issue #15, 'C, a' (https://github.com/NimrodZin/qr-art-forge/issues/15#issuecomment-5888012097).
 - v0.5 (2026-10-07) - P5 decided: VAE slicing on by default. Provenance: m2-7 GPU gate runs (loop/runs/m2-7, hand runs 2026-10-07), Nimrod in planner chat 2026-10-07.
 - v0.6 (2026-10-11) - P6 added: reference image never stored. Provenance: Nimrod, planner chat 2026-10-11, 'A'.
+- v0.7 (2026-10-17) — note under D3: validator tightening (02 v0.4) queued on F1 evidence. Provenance: Nimrod, planner chat 2026-10-17, 'A'.

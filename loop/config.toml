@@ -42,7 +42,8 @@ cheap = "claude-haiku-4-5-20251001"
 # whole bodies, every validator import line, and any gate_marker line ± gate_context lines.
 [never_economize]
 # Never-economize-lane steps auto-merge only while open = true and every hit is in the step's paths.
-open = true                 # set by Nimrod after 07 v0.2 verdict yes, 2026-10-03; false closes the lane again
+# opened by Nimrod after 07 v0.2 verdict yes, 2026-10-03
+open = false                # closed 2026-10-17 until F1 is measured and 02 v0.4 approved (planner chat); reopens with m2-10
 paths =["validator.py", "qrbuild.py", "README.md", ".github/"]
 gate_file = "app.py"
 gate_functions = ["run_forge", "forge"]
