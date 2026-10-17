@@ -501,6 +501,73 @@ def test_parse_verdict_with_or_without_header(text, approved):
         assert body.splitlines()[0] == "1. app.py:3 wrong default."
 
 
+# The m2-9 Reviewer reply, verbatim from loop/runs/m2-9/reviewer-1.json (response.result, sha256
+# 310e9c27…0831240): a narration line, then the header on line 3 and APPROVE on line 4. The driver
+# read it as red (04 gate log 2026-10-11/14).
+M2_9_REPLY = (ROOT / "tests" / "fixtures" / "reviewer_m2-9_1.txt").read_text(encoding="utf-8")
+
+
+def test_parse_verdict_m2_9_narration_before_header_is_approve():
+    assert M2_9_REPLY.startswith("Diff read against the spec; no defects found")
+    assert L("run").parse_verdict(M2_9_REPLY, "top", "m2-9") == (True, "")
+    assert L("session").has_header(M2_9_REPLY, "top", "m2-9") is True
+    assert L("session").is_blocked(M2_9_REPLY, "top", "m2-9") is False
+
+
+NARR = "Diff read against the spec; now writing the verdict."
+
+
+@pytest.mark.parametrize("text", [
+    # numbered defects after narration + header; a bare APPROVE further down must not win
+    f"{NARR}\n\n{H}\n1. app.py:3 wrong default.\n2. tests pin nothing.\n\nOtherwise:\nAPPROVE",
+    # numbered defects before the header
+    f"1. app.py:3 wrong default.\n\n{H}\nAPPROVE",
+    # BLOCKED after narration + header
+    f"{NARR}\n\n{H}\nBLOCKED: the diff is empty\n\nWould otherwise read:\nAPPROVE",
+    # the word "approve" inside defect text, and in narration
+    f"I cannot approve this yet.\n\n{H}\n1. app.py:12 the gate would approve an image that failed "
+    "`validate`.\n2. tests/test_gate.py:4 asserts APPROVE on an empty diff.",
+    f"{H}\nDo not APPROVE: app.py:3 wrong default.",
+    f"{H}\n**APPROVE** is not possible: app.py:3 wrong default.",
+    # bold numbers and bullets count as defects, too
+    f"{NARR}\n\n{H}\n**1.** app.py:3 wrong default.\nAPPROVE",
+    f"{NARR}\n\n{H}\n- app.py:3 wrong default.\nAPPROVE",
+])
+def test_parse_verdict_narration_does_not_turn_red_into_approve(text):
+    ok, body = L("run").parse_verdict(text, "top", "t-1")
+    assert ok is False and body
+
+
+def test_parse_verdict_blocked_after_narration_and_header_stops():
+    text = f"{NARR}\n\n{H}\nBLOCKED: the diff is empty\n\nwhy"
+    assert L("session").is_blocked(text, "top", "t-1") is True
+    assert L("run").parse_verdict(text, "top", "t-1")[1].startswith("BLOCKED: the diff is empty")
+
+
+def test_parse_verdict_defects_body_starts_at_the_first_defect():
+    text = f"{NARR}\n\n{H}\n1. app.py:3 wrong default.\n2. tests pin nothing.\n\n## Handover\n- x"
+    assert L("run").parse_verdict(text, "top", "t-1") == (False, "1. app.py:3 wrong default.\n2. tests pin nothing.")
+
+
+def test_parse_verdict_window_is_the_first_10_non_blank_lines():
+    s, run = L("session"), L("run")
+    nine = "\n\n".join(f"Narration {i}." for i in range(1, 9))     # 8 lines, blanks between
+    assert run.parse_verdict(f"{nine}\n{H}\nAPPROVE", "top", "t-1")[0] is True       # verdict is line 10
+    ten = nine + "\nNarration 9."
+    assert run.parse_verdict(f"{ten}\n{H}\nAPPROVE", "top", "t-1")[0] is False       # verdict is line 11
+    assert s.has_header(f"{ten}\n{H}\nAPPROVE", "top", "t-1") is True               # header is line 10
+    assert s.has_header(f"{ten}\nNarration 10.\n{H}\nAPPROVE", "top", "t-1") is False
+
+
+def test_parse_verdict_header_missing_stays_advisory():
+    s, run = L("session"), L("run")
+    text = M2_9_REPLY.replace("Class: top · Step: m2-9\n", "")
+    assert s.has_header(text, "top", "m2-9") is False                  # logged: header missing (advisory)
+    assert run.parse_verdict(text, "top", "m2-9") == (True, "")
+    assert s.has_header("APPROVE\n\n## Handover", "top", "t-1") is False
+    assert run.parse_verdict("APPROVE\n\n## Handover", "top", "t-1") == (True, "")
+
+
 def test_every_prompt_tells_the_role_how_to_stop():
     for role in ("architect", "tester", "implementer", "reviewer"):
         text = (ROOT / "loop" / "prompts" / f"{role}.md").read_text(encoding="utf-8")
@@ -587,6 +654,13 @@ def test_driver_needs_nimrod_when_diff_touches_validator(cfg, repo, tmp_path):
 NE = ORDINARY.replace("lane=ordinary", "lane=never-economize")
 
 
+@pytest.fixture
+def open_cfg(cfg):
+    """cfg with the never-economize lane open, whatever loop/config.toml says (closed 2026-10-17 until F1)."""
+    cfg["never_economize"] = dict(cfg["never_economize"], open=True)
+    return cfg
+
+
 @pytest.mark.parametrize("lane, paths, hits, is_open, refused", [
     ("never-economize", ["validator.py", "tests/"], ["validator.py"], True, ""),                # (b) path
     ("never-economize", ["app.py", "tests/"], ["app.py (gate)"], True, ""),                     # (b) gate
@@ -611,10 +685,10 @@ def test_merge_refusal(cfg, lane, paths, hits, is_open, refused):
 
 
 @pytest.mark.parametrize("lane", ["never-economize", "ordinary"])
-def test_merge_refusal_fail_closed_gate_refused_even_when_named(cfg, lane):
+def test_merge_refusal_fail_closed_gate_refused_even_when_named(open_cfg, lane):
     hit = "app.py (gate: fail closed, main:app.py unreadable: SyntaxError: invalid syntax)"
-    got = L("run").merge_refusal(_step(lane=lane, paths=["app.py", "tests/"]), [hit], cfg)
-    assert cfg["never_economize"]["open"] is True
+    got = L("run").merge_refusal(_step(lane=lane, paths=["app.py", "tests/"]), [hit], open_cfg)
+    assert open_cfg["never_economize"]["open"] is True
     assert got == "app.py gate span unresolved (base did not parse)"
 
 
@@ -630,23 +704,32 @@ def test_driver_stops_never_economize_step_on_fail_closed_gate(cfg, repo, tmp_pa
     assert "app.py gate span unresolved (base did not parse)" in _issue_body(tmp_path)
 
 
-def test_config_opens_the_never_economize_lane(cfg):
-    assert cfg["never_economize"]["open"] is True       # 07 v0.2 verdict yes (Nimrod, 2026-10-03)
+def test_config_closes_the_never_economize_lane():
+    # Opened on 07 v0.2 verdict yes (Nimrod, 2026-10-03); closed 2026-10-17 until F1 is measured and
+    # 02 v0.4 approved (planner chat); reopens with m2-10.
+    assert L("config").load_config()["never_economize"]["open"] is False
 
 
-def test_driver_merges_never_economize_step_when_open_and_named(cfg, repo, tmp_path):
+def test_config_as_shipped_refuses_a_named_never_economize_merge():
+    cfg = L("config").load_config()
+    got = L("run").merge_refusal(_step(lane="never-economize", paths=["validator.py", "tests/"]),
+                                 ["validator.py"], cfg)
+    assert "lane closed" in got
+
+
+def test_driver_merges_never_economize_step_when_open_and_named(open_cfg, repo, tmp_path):
     work = repo(NE.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
-    assert drive(cfg, work, tmp_path) == 0
+    assert drive(open_cfg, work, tmp_path) == 0
     gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
     assert ["pr", "merge", "7", "--squash", "--delete-branch"] in gh
     assert not any("needs-nimrod" in a for a in gh)
     assert "hits named in the spec: validator.py" in log_text(tmp_path)
 
 
-def test_driver_merges_never_economize_gate_hit_when_app_named(cfg, repo, tmp_path, monkeypatch):
+def test_driver_merges_never_economize_gate_hit_when_app_named(open_cfg, repo, tmp_path, monkeypatch):
     monkeypatch.setattr(L("gates"), "touched_never_economize", lambda *a, **k: ["app.py (gate)"])
     work = repo(NE)
-    assert drive(cfg, work, tmp_path) == 0
+    assert drive(open_cfg, work, tmp_path) == 0
     gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
     assert ["pr", "merge", "7", "--squash", "--delete-branch"] in gh
 
@@ -661,21 +744,21 @@ def test_driver_stops_never_economize_step_when_lane_closed(cfg, repo, tmp_path)
     assert "lane closed" in _issue_body(tmp_path) and "lane closed" in log_text(tmp_path)
 
 
-def test_driver_stops_never_economize_step_on_unnamed_hit(cfg, repo, tmp_path, monkeypatch):
+def test_driver_stops_never_economize_step_on_unnamed_hit(open_cfg, repo, tmp_path, monkeypatch):
     monkeypatch.setattr(L("gates"), "touched_never_economize",
                         lambda *a, **k: [".github/workflows/ci.yml", "validator.py"])
     work = repo(NE.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
-    assert drive(cfg, work, tmp_path) == 1
+    assert drive(open_cfg, work, tmp_path) == 1
     gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
     assert not any(a[:2] == ["pr", "merge"] for a in gh)
     assert ["pr", "edit", "7", "--add-label", "needs-nimrod"] in gh
     assert "not named in the spec: .github/workflows/ci.yml)" in _issue_body(tmp_path)   # validator.py is named
 
 
-def test_driver_ordinary_step_with_hit_still_stops_when_lane_open(cfg, repo, tmp_path):
-    assert cfg["never_economize"]["open"] is True
+def test_driver_ordinary_step_with_hit_still_stops_when_lane_open(open_cfg, repo, tmp_path):
+    assert open_cfg["never_economize"]["open"] is True
     work = repo(ORDINARY.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
-    assert drive(cfg, work, tmp_path) == 1
+    assert drive(open_cfg, work, tmp_path) == 1
     gh = [c["argv"] for c in calls(tmp_path, "gh.jsonl")]
     assert not any(a[:2] == ["pr", "merge"] for a in gh)
     assert "diff touches never-economize validator.py" in _issue_body(tmp_path)

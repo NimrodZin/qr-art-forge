@@ -43,7 +43,7 @@ class Result:
     duration_s: float
     error: str = ""
     blocked: bool = False       # the role stopped to report: `BLOCKED: <reason>` after the header, if any (06 §1)
-    header_ok: bool = True      # line 1 is the header; advisory only (the model is checked from modelUsage)
+    header_ok: bool = True      # a header is in the first 10 non-blank lines; advisory only (the model is checked from modelUsage)
 
 
 def role_class(role: str, step) -> str:
@@ -78,16 +78,32 @@ def render(role: str, step, extra: dict) -> str:
     return re.sub(r"\{([a-z_]+)\}", lambda m: str(values.get(m[1], m[0])), text)
 
 
-def has_header(text: str, cls: str, step_id: str) -> bool:
-    first = text.strip().splitlines()[0].strip("#*` ").lower() if text.strip() else ""
+HEADER_WINDOW = 10   # the header and the verdict are looked for in the first 10 non-blank lines (m2-8b)
+
+
+def is_header_line(line: str, cls: str, step_id: str) -> bool:
+    first = line.strip("#*` ").lower()
     word = lambda w: re.search(rf"(?<![\w-]){re.escape(w.lower())}(?![\w-])", first)
     return bool(word(cls) and word(step_id))
 
 
+def header_index(lines: list[str], cls: str, step_id: str) -> int | None:
+    """Index in `lines` of the first header line among the first HEADER_WINDOW non-blank lines, or None.
+    A narration line may come before it (m2-9 reviewer-1)."""
+    nonblank = [i for i, l in enumerate(lines) if l.strip()][:HEADER_WINDOW]
+    return next((i for i in nonblank if is_header_line(lines[i], cls, step_id)), None)
+
+
+def has_header(text: str, cls: str, step_id: str) -> bool:
+    return header_index(text.strip().splitlines(), cls, step_id) is not None
+
+
 def strip_header(text: str, cls: str, step_id: str) -> str:
-    """The reply without line 1 iff line 1 is the header; otherwise the reply, stripped."""
+    """The reply after the header line (and any narration before it) if a header is found; otherwise
+    the reply, stripped."""
     lines = text.strip().splitlines()
-    return "\n".join(lines[1:]) if lines and has_header(lines[0], cls, step_id) else text.strip()
+    i = header_index(lines, cls, step_id)
+    return "\n".join(lines[i + 1:]) if i is not None else text.strip()
 
 
 def is_blocked(text: str, cls: str, step_id: str) -> bool:

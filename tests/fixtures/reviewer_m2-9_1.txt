@@ -1,0 +1,37 @@
+Diff read against the spec; no defects found in the code or tests, now writing the verdict.
+
+Class: top · Step: m2-9
+APPROVE
+
+The reference-image change matches the spec. Only `app.py` and `tests/` changed, plus `steps/m2-9/spec.md`, which the orchestrator writes.
+
+**What I checked against the spec:**
+- **Constants and placement.** The four new constants sit next to `CN` (`app.py:18-21`). `_load_pipes` never loads the adapter at startup.
+- **Closure state.** `_apply_reference` (`app.py:68-82`) keeps a single `ip_loaded` boolean and puts the image only in a per-call dict.
+- **Load path.** It loads the adapter once with the exact repo, subfolder and weight name. It hands `pipe`'s image encoder and feature extractor to `i2i`, then sets the scale and adds `ip_adapter_image`.
+- **Unload path.** When the adapter is loaded and no reference is given, it calls `unload_ip_adapter()` once, clears `i2i.image_encoder`, and leaves the default call arguments unchanged.
+- **Installed diffusers.** I read `unload_ip_adapter`. It restores the default attention processors, and it keeps `pipe.feature_extractor` because `pipe` has a `safety_checker` attribute. So handing that extractor to `i2i` is valid after a reload.
+- **`run_forge` (`app.py:166-212`).**
+  - Without a reference, `gen` and `rescue` get only `negative`, exactly as today. With one, they also get the same image object and the scale as a `float`.
+  - The archive call passes `reference=reference is not None`.
+  - `settings`, the report text and the rescue eligibility are unchanged.
+  - THE GATE line (`app.py:201`), the survivor/reject logic and both `validate` calls are untouched.
+- **`build_reject_records`.** `reference` is keyword-only, defaults to `False`, and is stored as a bool at the top level of each record. Nothing derived from the image goes in.
+- **`forge` and the UI.**
+  - `forge` takes the two new parameters before `progress`, forwards them, and keeps its decorator and error handling.
+  - The Image and Slider sit inside "Advanced" between the negative box and Rescue, with the spec's labels and settings.
+  - The click has 11 inputs. `delete_cache=(3600, 3600)` is set and the disclosure line is unchanged.
+- **Tests.**
+  - `tests/test_reference.py` covers all 26 behaviour-table rows. It checks the call order (load → scale → pipe, unload before the pipe call), whole-dict key equality, and weakref non-retention in both `run_forge` and the closures.
+  - The `tests/test_negative.py` change only replaces the superseded `len == 9` with 11 and adds the two new input checks; no other assertion was relaxed.
+- **Guards.** No `requirements*`, `docs/`, `README.md`, `.github/`, `validator.py` or `qrbuild.py` changes, and no secrets in the diff.
+
+## Handover
+- pytest -q: not run (read-only role)
+- Files changed: None
+- Not certain:
+  1. **Reference path not run on a GPU.** I didn't verify that the img2img pipeline in diffusers 0.30.3 accepts `ip_adapter_image` when its encoder is assigned by attribute, or the pass rate and time cost with a reference. The orchestrator's batch passes no reference, so this needs one hand batch with a reference on the 4070 (spec Not certain 1).
+  2. **Byte-identity is checked structurally only.** No md5 comparison of main against this branch was run (spec Not certain 2).
+  3. **First reference run on ZeroGPU may time out.** It downloads the ≈2.5 GB encoder inside the 120 s GPU slot (spec Not certain 3).
+  4. **Defaults pending Nimrod.** `REF_SCALE = 0.5`, the new UI labels and `delete_cache` were not chosen by him. The PR needs the `ui-change` label and a body flag.
+- Deploy: none

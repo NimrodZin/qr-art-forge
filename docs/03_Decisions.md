@@ -1,11 +1,11 @@
-# 03 — Decisions v0.6 (2026-10-11)
+# 03 — Decisions v0.7 (2026-10-17)
 
 Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidence) · Provisional (built on; flagged when a task exposes a reason to revisit) · Open (never silently resolved; a dependent task names it and takes the smallest hedge) · Superseded (kept, with pointer).
 
 ## Decided
 - D1 Base pipeline v1: SD1.5 + QR Code Monster v2 ControlNet (`monster-labs/control_v1p_sd15_qrcode_monster`, subfolder v2); DreamShaper 8 checkpoint, swappable via `BASE_MODEL`.
 - D2 Hosting v1: Hugging Face Space, ZeroGPU, mirrored from GitHub. Note 2026-09-26: the Space stays up but is not promoted; development and the loop run on the Windows PC; public production is decided at M3 (see O2).
-- D3 Validation contract as in 02 v0.3: phone-like decode (3 binarizers × 3 softening levels, any-hit) gates; OpenCV advisory; three conditions. (Superseded: v0.1 two decoders/four conditions; v0.2 zxing single-binarizer.)
+- D3 Validation contract as in 02 v0.3: phone-like decode (3 binarizers × 3 softening levels, any-hit) gates; OpenCV advisory; three conditions. (Superseded: v0.1 two decoders/four conditions; v0.2 zxing single-binarizer.) Note 2026-10-17: a v0.4 tightening is queued on F1 phone-truth evidence (04 m2-10, OD 13); D3 itself is unchanged.
 - D4 No accounts, no persistence, no payment in v1.
 - D5 Workflow: Autonomous Build Loop; local orchestrator on Nimrod's Windows PC (E:\qr-art-forge) via `claude -p`; the Mac is courier only. (Superseded 2026-09-26: 'on Nimrod's Mac'.) GitHub PRs + Actions.
 - D6 Gradio 5.x replaces Gradio 4.x in the stack (PR #4).
@@ -30,3 +30,4 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 - v0.4 (2026-09-29) — P3: 768 × 1024 with the bleed canvas. Provenance: Nimrod on issue #15, 'C, a' (https://github.com/NimrodZin/qr-art-forge/issues/15#issuecomment-5888012097).
 - v0.5 (2026-10-07) - P5 decided: VAE slicing on by default. Provenance: m2-7 GPU gate runs (loop/runs/m2-7, hand runs 2026-10-07), Nimrod in planner chat 2026-10-07.
 - v0.6 (2026-10-11) - P6 added: reference image never stored. Provenance: Nimrod, planner chat 2026-10-11, 'A'.
+- v0.7 (2026-10-17) — note under D3: validator tightening (02 v0.4) queued on F1 evidence. Provenance: Nimrod, planner chat 2026-10-17, 'A'.

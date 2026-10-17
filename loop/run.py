@@ -74,13 +74,23 @@ def merge_refusal(step, hits: list[str], cfg: dict) -> str:
     return ""
 
 
+NUMBERED = re.compile(r"^[#*_`>\s]*\d+[.)](?!\d)")
+BULLET = re.compile(r"^[-*+]\s")
+
+
 def parse_verdict(text: str, cls: str, step_id: str) -> tuple[bool, str]:
-    """The first non-blank line after the header (if given) is `APPROVE` or the defect list."""
-    body = session.strip_header(text.split("## Handover")[0], cls, step_id).splitlines()
-    body = [l for l in body if l.strip()]
-    if body and body[0].strip().strip("*`").strip() == "APPROVE":
-        return True, ""
-    return False, "\n".join(body) or "(reviewer gave no verdict)"
+    """The verdict is the first verdict line among the first 10 non-blank lines before `## Handover`:
+    `APPROVE` alone on its line, or red — a defect (numbered or bulleted) or `BLOCKED:`. Narration and
+    the header line before it are skipped (m2-9: a narration line preceded the header). Red wins if it
+    comes first; no verdict line in the window is red."""
+    lines = [l.strip() for l in text.split("## Handover")[0].splitlines() if l.strip()]
+    for i, line in enumerate(lines[:session.HEADER_WINDOW]):
+        if line.strip("*`").strip() == "APPROVE":
+            return True, ""
+        if NUMBERED.match(line) or BULLET.match(line) or line.strip("#*`> ").startswith("BLOCKED:"):
+            return False, "\n".join(lines[i:])
+    body = session.strip_header("\n".join(lines), cls, step_id).splitlines()
+    return False, "\n".join(l for l in body if l.strip()) or "(reviewer gave no verdict)"
 
 
 STATUS_BLOCKED = re.compile(r"^[#*_>\s]*status\s*:\s*[*_]*\s*blocked\b", re.I)
