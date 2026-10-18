@@ -1,4 +1,4 @@
-# 02 — Core Spec v0.3 (2026-09-24)
+# 02 — Core Spec v0.4 (2026-10-18)
 
 Every change bumps the version and records what changed under "Changes".
 
@@ -11,11 +11,12 @@ Every change bumps the version and records what changed under "Changes".
 - QR version auto-fit, error correction H, quiet zone 4 modules, black modules on white.
 - Centred on a 768 × 768 mid-grey (RGB 128,128,128) canvas; module size = floor(768 / (modules + 8)); nearest-neighbour scaling.
 
-## Validation — NEVER ECONOMIZE (v0.3)
+## Validation — NEVER ECONOMIZE (v0.4)
 - Softening S_k(img): Gaussian blur σ_k = k · max(1, w/600) with w the variant's width, then contrast ×0.85, brightness +20; S_0 = contrast/brightness only, no blur.
-- Phone-like decode D(img): zxing-cpp run with binarizers {LocalAverage, GlobalHistogram, FixedThreshold} on each of {img, S_1(img), S_2(img)}; D succeeds iff any of the nine returns the exact payload string.
+- Phone-like decode D(img): zxing-cpp run with binarizers {LocalAverage, GlobalHistogram, FixedThreshold} on each of {img, S_1(img), S_2(img)}; D succeeds iff any of the nine returns the exact payload string. All nine are run, so the report can list every hit.
 - Conditions on the exact candidate pixels: `full` = img; `small` = resize longest side 480, INTER_AREA; `tilt` = perspective warp TL (6%w,4%h), TR (94%w,0), BR (w,h), BL (0,97%h), white border.
-- Gating: **Pass** ⇔ D succeeds on all three conditions. Score = conditions where D succeeds (0–3); rescue eligibility: score ≥ 1.
+- Gating: **Pass** ⇔ D succeeds on `full` and on `small`. `tilt` does not gate; it is still computed, reported and counted in the score. Score = conditions where D succeeds (0–3); rescue eligibility: score ≥ 1.
+- Report, per condition: `zx` (D succeeds), `cv` (advisory), `hits` (the binarizer@softening combos that returned the payload, in the order S_0, S_1, S_2 × LocalAverage, GlobalHistogram, FixedThreshold, written `LA@S0` … `FT@S2`) and `hit_count` (0–9). Top level: `pass`, `score`, `max` (3) and `thin` = pass and `small` hit_count = 1. `thin` is reported only; it does not gate.
 - OpenCV `QRCodeDetector` on the unsoftened variant is reported as advisory only.
 
 ## Rescue
@@ -25,6 +26,7 @@ Every change bumps the version and records what changed under "Changes".
 ## Output
 - Only passing images are returned to the gallery.
 - The report lists every seed, its condition results, and whether rescue was applied and its result.
+- The archive record carries the full report dict; additive fields allowed.
 - The control image is shown.
 
 ## Invariant (hard constraint)
@@ -36,3 +38,4 @@ No image reaches the gallery without `validate(image, payload)["pass"] == True` 
 - v0.2.1 (2026-09-23) — clarified σ basis. Provenance: M1.6 handover, Not certain 2.
 - v0.3 (2026-09-24) — phone-like decode: 3 binarizers × 3 softening levels, any-hit. Provenance: run 55795690, 7/7 rejects read on phone, 7/7 pass v0.3 on all conditions, negatives fail (planner measurement, zxing-cpp 2.2.0).
 - v0.3.1 (2026-09-26) — gallery serves PNG so displayed pixels are the validated pixels. Provenance: local/REPORT-local.md §5.
+- v0.4 (2026-10-18) — tilt no longer gates (full ∧ small); per-condition hits and thin flag reported. Provenance: F1 phone-truth set, run 20261017-143330: 3/3 tilt-only rejects read on iPhone and Android; 0.9 floor confirmed; Nimrod, planner chat 2026-10-18, 'A'. Output: the archive record carries the full report dict; additive fields allowed (planner ruling, m2-10 follow-up, 2026-10-18).

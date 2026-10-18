@@ -61,11 +61,11 @@ def test_control_seeds_are_the_m2_10_edits():
            ("9-no-tilt-condition.json", "10-pass-rule-off-by-one.json", "11-quiet-zone-2.json")}
     assert [(e["file"], e["new"]) for e in got.values()] == [
         ("validator.py", "    pass  # tilt condition removed"),
-        ("validator.py", '"pass": score >= len(results) - 1'),
+        ("validator.py", 'passed = any(results[c]["zx"] for c in GATES)'),
         ("qrbuild.py", "border=2")]
     assert got["9-no-tilt-condition.json"]["old"] == \
         '    out["tilt"] = cv2.warpPerspective(img, M, (w, h), borderValue=(255, 255, 255))'
-    assert got["10-pass-rule-off-by-one.json"]["old"] == '"pass": score == len(results)'
+    assert got["10-pass-rule-off-by-one.json"]["old"] == 'passed = all(results[c]["zx"] for c in GATES)'
     assert got["11-quiet-zone-2.json"]["old"] == "border=4"
 
 
