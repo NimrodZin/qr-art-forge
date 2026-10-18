@@ -1,4 +1,4 @@
-# 07 — Calibration v0.2 (2026-10-03)
+# 07 — Calibration v0.3 (2026-10-18)
 
 Base: main at 22094c5 (06 v0.5). Supersedes v0.1 (c909e07, primed replay 8/8, mutation
 stopped at 26/157, verdict NOT YET). Provenance: planner audit F4, chat 2026-10-03, PR #21
@@ -62,3 +62,6 @@ Replay: 8/8 listed and 3/3 controls, unprimed, one full run — met.
 Mutation: 100 % of non-equivalent killed, every survivor triaged, every gap closed — met.
 
 Verdict (Nimrod): yes — 2026-10-03, planner chat; lane opened in PR #23.
+
+## Changes
+- v0.3 (2026-10-18) — seeds 7, 9, 10 re-anchored to validator 02 v0.4 without re-run; verdict stands on v0.2 evidence; first loop run after the lane reopens re-proves them. Provenance: planner rulings, m2-10 follow-up, 2026-10-18.

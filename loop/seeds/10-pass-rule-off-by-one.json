@@ -1,6 +1,6 @@
 {
  "file": "validator.py",
- "old": "\"pass\": score == len(results)",
- "new": "\"pass\": score >= len(results) - 1",
- "defect": "A candidate passes with one condition failing (02 v0.3 gating)."
+ "old": "passed = all(results[c][\"zx\"] for c in GATES)",
+ "new": "passed = any(results[c][\"zx\"] for c in GATES)",
+ "defect": "A candidate passes with a gating condition (full or small) failing (02 v0.4 gating)."
 }

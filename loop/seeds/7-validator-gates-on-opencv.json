@@ -1,6 +1,6 @@
 {
  "file": "validator.py",
- "old": "\"zx\": _phone_decode(variant, expected)",
- "new": "\"zx\": _decode_cv(variant) == expected",
- "defect": "The validator gates on OpenCV instead of the phone-like zxing decode (M1.6/1.8 lesson; 02 v0.3)."
+ "old": "if _zx_read(variant, binarizer) == expected:",
+ "new": "if _decode_cv(variant) == expected:",
+ "defect": "The phone-like decode D reads with OpenCV instead of zxing, so OpenCV gates (M1.6/1.8 lesson; 02 v0.4)."
 }

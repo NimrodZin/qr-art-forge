@@ -26,6 +26,7 @@ Every change bumps the version and records what changed under "Changes".
 ## Output
 - Only passing images are returned to the gallery.
 - The report lists every seed, its condition results, and whether rescue was applied and its result.
+- The archive record carries the full report dict; additive fields allowed.
 - The control image is shown.
 
 ## Invariant (hard constraint)
@@ -37,4 +38,4 @@ No image reaches the gallery without `validate(image, payload)["pass"] == True` 
 - v0.2.1 (2026-09-23) — clarified σ basis. Provenance: M1.6 handover, Not certain 2.
 - v0.3 (2026-09-24) — phone-like decode: 3 binarizers × 3 softening levels, any-hit. Provenance: run 55795690, 7/7 rejects read on phone, 7/7 pass v0.3 on all conditions, negatives fail (planner measurement, zxing-cpp 2.2.0).
 - v0.3.1 (2026-09-26) — gallery serves PNG so displayed pixels are the validated pixels. Provenance: local/REPORT-local.md §5.
-- v0.4 (2026-10-18) — tilt no longer gates (full ∧ small); per-condition hits and thin flag reported. Provenance: F1 phone-truth set, run 20261017-143330: 3/3 tilt-only rejects read on iPhone and Android; 0.9 floor confirmed; Nimrod, planner chat 2026-10-18, 'A'.
+- v0.4 (2026-10-18) — tilt no longer gates (full ∧ small); per-condition hits and thin flag reported. Provenance: F1 phone-truth set, run 20261017-143330: 3/3 tilt-only rejects read on iPhone and Android; 0.9 floor confirmed; Nimrod, planner chat 2026-10-18, 'A'. Output: the archive record carries the full report dict; additive fields allowed (planner ruling, m2-10 follow-up, 2026-10-18).
