@@ -10,7 +10,7 @@ Space created and mirrored; first batch generated. Gate: 3/3 phone scans. Exit a
 
 ## M2 — Quality loop (automated)
 Tune P1/P2 from measured pass rates; UI polish behind "Advanced"; resolve O1. Gate: phone scan on a fresh batch + Brief criterion 3.
-Steps: M2.1 gallery PNG (done) · M2.3 orchestrator (loop/) · M2.4 calibration (docs/07) · M2.5 pilot: m2-6 via loop (merged by hand, #19) · M2.8 loop fixes · M2.9 unattended proof: m2-7 · then OD 8 IP-Adapter, OD 9 negative prompt, P5 · F1 phone-truth batch (local/, manual) before m2-10.
+Steps: M2.1 gallery PNG (done) · M2.3 orchestrator (loop/) · M2.4 calibration (docs/07) · M2.5 pilot: m2-6 via loop (merged by hand, #19) · M2.8 loop fixes · M2.9 unattended proof: m2-7 · then OD 8 IP-Adapter, OD 9 negative prompt, P5 · F1 phone-truth batch (local/, manual) before m2-10 · m2-10b decoder decision after local/f1_wechat.py.
 
 ## M3 — Own-domain site (automated; after O2/O3 decided)
 Front end on Nimrod's domain, backend API, rate limiting (Open Discussion 5). Gate: phone scan of a result served from that domain.
@@ -34,7 +34,7 @@ The never-economize list is never downgraded.
 - [x] m2-7 · VAE slicing on CUDA behind env flag, default off (P5) · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes · gpu_env=QRAF_VAE_SLICING=1 · https://github.com/NimrodZin/qr-art-forge/pull/25
 - [x] m2-7b · VAE slicing on by default (P5 decided); QRAF_VAE_SLICING=0 turns it off · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes · gpu_env=QRAF_VAE_SLICING=0 · https://github.com/NimrodZin/qr-art-forge/pull/27
 - [x] m2-9 · Reference image — IP-Adapter style reference under Advanced (OD 8); never stored, archive JSON records reference:true/false only (P6); default generation without a reference stays byte-identical · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=yes · https://github.com/NimrodZin/qr-art-forge/pull/31
-- [ ] m2-10 · Validator tightening per F1 phone-truth set — 02 v0.4 (reject inverted reads; binarizer rule on the 480 px variant; camera-sim condition; per-module centre margin in the report); blocked until F1 is measured and 02 v0.4 approved · class=top · lane=never-economize · paths=validator.py,tests/ · touches_gpu=yes
+- [ ] m2-10 · Validator tightening per F1 phone-truth set — 02 v0.4 (reject inverted reads; binarizer rule on the 480 px variant; camera-sim condition; per-module centre margin in the report) · class=top · lane=never-economize · paths=validator.py,tests/ · touches_gpu=yes
 - [ ] m2-12 · Shadow-style centre repair — luma-only darkening at misread module centres (OKLab L, feather σ 0.15–0.25 module, chroma kept), validated on the repaired pixels · class=top · lane=never-economize · paths=app.py,tests/ · touches_gpu=yes
 - [ ] m2-5 · Bleed canvas — 768×1024 control image, code centred, model paints beyond it (OD 6.1); needs 02 v0.5 approval, after m2-10 · class=top · lane=never-economize · paths=qrbuild.py,app.py,tests/ · touches_gpu=yes
 - [ ] m2-9b · Reference image errors — an upload Pillow cannot open (e.g. AVIF) or one purged by the hourly cache clean (delete_cache, P6) shows a clear 're-upload a PNG/JPG' message instead of a raw error; default generation stays byte-identical · class=scoped · lane=ordinary · paths=app.py,tests/ · touches_gpu=no

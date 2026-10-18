@@ -30,8 +30,10 @@ def test_three_conditions_with_bool_zx_and_cv():
     v = validate(make_qr(PAY), PAY)
     assert set(v["results"]) == CONDS
     for r in v["results"].values():
-        assert set(r) == {"zx", "cv"}
+        assert set(r) == {"zx", "cv", "hits", "hit_count"}
         assert type(r["zx"]) is bool and type(r["cv"]) is bool
+        assert type(r["hits"]) is list and all(type(h) is str for h in r["hits"])
+        assert type(r["hit_count"]) is int and r["hit_count"] == len(r["hits"])
 
 
 def test_opencv_is_advisory_only(monkeypatch):
@@ -47,14 +49,14 @@ def test_zxing_gates_even_when_opencv_reads(monkeypatch):
     assert v["pass"] is False and v["score"] == 0
 
 
-def test_zxing_miss_on_one_condition_fails(monkeypatch):
-    real = validator._phone_decode
+def test_zxing_miss_on_small_fails(monkeypatch):
+    real = validator._phone_hits
     calls = []
 
     def zx(img, expected):
         calls.append(img)
-        return False if len(calls) == 2 else real(img, expected)  # full, small, tilt
-    monkeypatch.setattr(validator, "_phone_decode", zx)
+        return [] if len(calls) == 2 else real(img, expected)  # full, small, tilt
+    monkeypatch.setattr(validator, "_phone_hits", zx)
     v = validate(make_qr(PAY), PAY)
     assert v["pass"] is False and v["score"] == 2
     assert v["results"]["small"]["zx"] is False
@@ -69,7 +71,7 @@ def test_every_condition_is_softened(monkeypatch):
     monkeypatch.setattr(validator, "_zx_read", lambda im, b: (seen.append(im), "")[1])
     for name, variant in validator._conditions(img).items():
         seen.clear()
-        assert validator._phone_decode(variant, PAY) is False
+        assert validator._phone_hits(variant, PAY) == []
         distinct = list({id(im): im for im in seen}.values())
         assert len(distinct) == 3, name
         assert distinct[0] is variant, name
@@ -177,11 +179,13 @@ def test_v3_results_keep_zx_and_cv_per_condition(monkeypatch):
     monkeypatch.setattr(validator, "_zx_read",
                         lambda img, b: PAY if b == BIN.FixedThreshold else "")
     v = validate(make_qr(PAY), PAY)
-    assert set(v) == {"pass", "score", "max", "results"}
+    assert set(v) == {"pass", "score", "max", "results", "thin"}       # v0.4: thin is additive
+    assert type(v["pass"]) is bool and type(v["score"]) is int and type(v["max"]) is int
     assert set(v["results"]) == CONDS
     for r in v["results"].values():
-        assert set(r) == {"zx", "cv"}
+        assert set(r) == {"zx", "cv", "hits", "hit_count"}               # v0.4: hits, hit_count additive
         assert type(r["zx"]) is bool and type(r["cv"]) is bool
+        assert r["hits"] == ["FT@S0", "FT@S1", "FT@S2"] and r["hit_count"] == 3
     assert summary_line(v).startswith("PASS full zx✓ (cv")
 
 
@@ -225,12 +229,14 @@ def test_v3_opencv_sees_the_unsoftened_variant(monkeypatch):
     assert np.array_equal(seen[0], bgr)  # full, exactly the candidate pixels
 
 
-def test_v3_phone_decode_returns_early_on_first_hit(monkeypatch):
+def test_v4_hits_list_every_combo_in_order(monkeypatch):
+    # v0.4: D no longer stops at the first hit; all nine combos run and every hit is listed.
     calls = []
     monkeypatch.setattr(validator, "_zx_read", lambda img, b: (calls.append(b), PAY)[1])
     img = cv2.cvtColor(np.array(make_qr(PAY)), cv2.COLOR_RGB2BGR)
-    assert validator._phone_decode(img, PAY) is True
-    assert len(calls) == 1
+    assert validator._phone_hits(img, PAY) == ["LA@S0", "GH@S0", "FT@S0", "LA@S1", "GH@S1", "FT@S1",
+                                               "LA@S2", "GH@S2", "FT@S2"]
+    assert len(calls) == 9
 
 
 def test_soften_levels_are_pairwise_different_and_levels_are_1_2():
@@ -259,3 +265,113 @@ def test_decode_cv_on_clean_qr_returns_payload():
 def test_zx_read_on_blank_image_returns_empty(binarizer):
     blank = np.full((768, 768, 3), 200, np.uint8)
     assert validator._zx_read(blank, binarizer) == ""
+
+
+# --- v0.4: pass = D on full and small; tilt scored, not gating; hits and thin reported ---
+
+def _hit_conditions(monkeypatch, ok):
+    """D hits twice (not thin) on the conditions in `ok` and nowhere else; validate otherwise runs as is."""
+    real = validator._conditions
+    names = {}
+
+    def conditions(img):
+        out = real(img)
+        names.update({id(v): c for c, v in out.items()})
+        return out
+    monkeypatch.setattr(validator, "_conditions", conditions)
+    monkeypatch.setattr(validator, "_phone_hits",
+                        lambda img, expected: ["LA@S0", "GH@S2"] if names[id(img)] in ok else [])
+
+
+@pytest.mark.parametrize("ok,passes", [
+    ({"full", "small", "tilt"}, True),
+    ({"full", "small"}, True),           # the F1 tilt-only reject
+    ({"full", "tilt"}, False),
+    ({"small", "tilt"}, False),
+    ({"full"}, False),
+    ({"small"}, False),
+    ({"tilt"}, False),
+    (set(), False)])
+def test_v4_pass_iff_full_and_small(monkeypatch, ok, passes):
+    _hit_conditions(monkeypatch, ok)
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is passes
+    assert v["score"] == len(ok) and v["max"] == 3                      # tilt still counts in score
+    assert {c for c, r in v["results"].items() if r["zx"]} == ok
+    assert v["thin"] is False
+
+
+def test_v4_full_and_small_but_not_tilt_passes_with_score_2(monkeypatch):
+    # Real decode with the tilt variant blinded: the warp's white border makes its corner bright
+    # (255, or 237 softened); the grey canvas of full and small stays near 128.
+    real = validator._zx_read
+    monkeypatch.setattr(validator, "_zx_read", lambda img, b: "" if img[0, 0, 0] > 200 else real(img, b))
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is True and v["score"] == 2
+    assert v["results"]["tilt"]["zx"] is False
+    assert v["results"]["tilt"]["hits"] == [] and v["results"]["tilt"]["hit_count"] == 0
+    assert summary_line(v).startswith("PASS ") and summary_line(v).endswith("(2/3)")
+
+
+def test_v4_tilt_only_scores_1_and_fails(monkeypatch):
+    real = validator._zx_read
+    monkeypatch.setattr(validator, "_zx_read", lambda img, b: real(img, b) if img[0, 0, 0] > 200 else "")
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is False and v["score"] == 1 and v["results"]["tilt"]["zx"] is True
+
+
+@pytest.mark.parametrize("img,pay", [
+    (Image.new("RGB", (768, 768), (200, 200, 200)), PAY),
+    (Image.new("RGB", (768, 768), (90, 90, 90)), PAY),
+    (make_qr(PAY), "https://other.io"),
+    (make_qr("https://other.io"), PAY)])
+def test_v4_synthetic_negatives_still_fail(img, pay):
+    v = validate(img, pay)
+    assert v["pass"] is False and v["score"] == 0 and v["thin"] is False
+    assert all(r["hits"] == [] and r["hit_count"] == 0 for r in v["results"].values())
+
+
+def _small_hits_only(binarizers):
+    """_zx_read: real on 768 px variants; on the 480 px `small` variant, real only for `binarizers` on the
+    unsoftened S_0 (make_qr has pure-black modules, min 0; softened pixels never go below 20)."""
+    real = validator._zx_read
+
+    def zx(img, b):
+        if img.shape[0] != 480:
+            return real(img, b)
+        return real(img, b) if b in binarizers and img.min() == 0 else ""
+    return zx
+
+
+def test_v4_small_hit_by_exactly_one_combo_is_pass_and_thin(monkeypatch):
+    monkeypatch.setattr(validator, "_zx_read", _small_hits_only({BIN.LocalAverage}))
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is True and v["thin"] is True
+    assert v["results"]["small"]["hits"] == ["LA@S0"] and v["results"]["small"]["hit_count"] == 1
+
+
+def test_v4_small_hit_by_two_combos_is_pass_not_thin(monkeypatch):
+    monkeypatch.setattr(validator, "_zx_read", _small_hits_only({BIN.LocalAverage, BIN.GlobalHistogram}))
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is True and v["thin"] is False
+    assert v["results"]["small"]["hits"] == ["LA@S0", "GH@S0"] and v["results"]["small"]["hit_count"] == 2
+
+
+def test_v4_thin_needs_a_pass(monkeypatch):
+    # small hit by one combo, but full misses: a fail is never thin.
+    small_one = _small_hits_only({BIN.LocalAverage})
+    monkeypatch.setattr(validator, "_zx_read", lambda img, b: (
+        "" if img.shape[0] == 768 and img[0, 0, 0] < 200 else small_one(img, b)))
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is False and v["results"]["full"]["zx"] is False
+    assert v["results"]["small"]["hit_count"] == 1 and v["thin"] is False
+
+
+def test_v4_clean_qr_is_not_thin():
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is True and v["thin"] is False and v["results"]["small"]["hit_count"] > 1
+
+
+def test_v4_bin_codes_and_gates():
+    assert [validator._BIN_CODE[b] for b in validator.BINARIZERS] == ["LA", "GH", "FT"]
+    assert validator.GATES == ("full", "small")
