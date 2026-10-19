@@ -24,7 +24,7 @@ comfy_wait_s = 600          # wait this long for ComfyUI's queue to empty and th
 # must show at least gpu_min_free_mb MiB free and at most gpu_max_util % utilization.
 nvidia_smi_cmd = ["nvidia-smi"]
 gpu_min_free_mb = 7000      # the slicing path peaks ~6 GB reserved; idle desktop holds ~2.4 GB of the 12.3 GB
-gpu_max_util = 10
+gpu_max_util = 50          # raised 2026-10-19: remote-desktop screen encoding (AnyDesk) holds 35-40 % while the screen changes; a real generation runs near 100 %, and gpu_min_free_mb catches a loaded ComfyUI (planner chat)
 ci_timeout_s = 1200
 ci_poll_s = 30
 
