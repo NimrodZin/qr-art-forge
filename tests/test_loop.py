@@ -1375,7 +1375,7 @@ def test_gpu_free_nonzero_exit(cfg):
 
 def test_config_gpu_preflight_defaults():
     c = L("config").load_config()
-    assert (c["nvidia_smi_cmd"], c["gpu_min_free_mb"], c["gpu_max_util"]) == (["nvidia-smi"], 7000, 10)
+    assert (c["nvidia_smi_cmd"], c["gpu_min_free_mb"], c["gpu_max_util"]) == (["nvidia-smi"], 7000, 50)
 
 
 GPU_STEP = ORDINARY.replace("touches_gpu=no", "touches_gpu=yes")

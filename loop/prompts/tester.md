@@ -12,7 +12,7 @@ Editable paths: {paths}
 Touches GPU: {gpu_test}
 
 Rules:
-- Write tests only, under tests/. Do not edit any other file. The orchestrator checks `git status` after you finish and stops the step if anything outside tests/ changed.
+- Write tests only, under tests/. Do not edit any other file. Do not create helper or reference modules anywhere in the repo (no tests/<module>.py): you cannot delete files, and a stray module shadows the real one on import. To sanity-check your tests against a reference implementation, write it under the system temp directory (tempfile.gettempdir()) and remove nothing in the repo. The orchestrator checks `git status` after you finish and stops the step if anything outside tests/ changed.
 - The tests must FAIL on the current branch, which is main plus the spec and nothing else. Show this: run `.venv/Scripts/python.exe -m pytest -q <your test files>` and paste the red summary line. The orchestrator re-runs them and stops the step if they pass.
 - CPU only; generation mocked, as the existing tests/ do. Do NOT add @pytest.mark.gpu tests: no gpu marker is registered and CI would run them. The orchestrator runs the real-generation check itself when Touches GPU is yes.
 - Test observable behaviour from the spec's behaviour table, one test per row where practical. Don't test implementation details the spec leaves open.
