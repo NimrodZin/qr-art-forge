@@ -12,6 +12,7 @@ from PIL import Image
 
 from qrbuild import normalize_payload, make_qr, PayloadError, SIZE
 from validator import validate, summary_line
+import repair
 
 BASE = os.environ.get("BASE_MODEL", "Lykon/dreamshaper-8")
 CN = "monster-labs/control_v1p_sd15_qrcode_monster"
@@ -173,6 +174,7 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
     control = make_qr(payload)
     seed = int(seed) if seed >= 0 else random.randint(0, 2**31 - 1)
     neg = build_negative(negative)
+    repair_on = repair.repair_enabled()
     ref_kwargs = {"reference": reference, "reference_scale": float(reference_scale)} \
         if reference is not None else {}
     if progress:
@@ -188,6 +190,15 @@ def run_forge(payload_raw: str, prompt: str, batch: int, weight: float, steps: i
         tag = f"seed {seed+i}: " + summary_line(v)
         if not v["pass"]:
             rejects.append((f"seed{seed+i}", im, v))
+        if repair_on and not v["pass"] and v["score"] >= 1:  # m2-12: repair before rescue
+            im_r, k = repair.repair(im, control)
+            if k == 0:
+                tag += " → repair 0: unchanged"
+            else:
+                v_r = validate(im_r, payload)
+                tag += f" → repair {k}: " + summary_line(v_r)
+                if v_r["pass"]:
+                    im, v = im_r, v_r
         if not v["pass"] and rescue and v["score"] >= 1:
             im2 = pipes["rescue"](prompt, im, control, float(weight), int(steps), float(cfg), seed + i,
                                   negative=neg, **ref_kwargs)
