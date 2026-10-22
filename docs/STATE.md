@@ -1,1 +1,1 @@
-Main at a3be8e1 · phase C · M2 · last merged m2-10 (#34, by hand) · next m2-12 via loop (lane closed → PR for Nimrod) · carried: m2-10b WeChat decoder queued; m2-5 needs 02 v0.5; OD 12 step 3 DiffQRCoder comparison
+Main at 8328e40 · phase C · M2 · last merged m2-10 (#34) · m2-12 parked (#40) · next: scheduling/framing batch (local/, manual) · carried: m2-10b WeChat decoder; m2-5 needs 02 v0.5; loop PR-title fix

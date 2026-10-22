@@ -636,6 +636,17 @@ def test_driver_merges_ordinary_step_on_approve_and_green_ci(cfg, repo, tmp_path
     assert sh(work, "git", "branch", "--show-current").strip() == "main"
 
 
+def test_pr_title_is_cut_to_a_word_boundary_and_keeps_the_step_id(cfg, repo, tmp_path):
+    long_title = " ".join(f"word{i}" for i in range(60))           # ~300 chars
+    assert len(long_title) > 290
+    work = repo(ORDINARY.replace("Fake ordinary step", long_title))
+    assert drive(cfg, work, tmp_path) == 0
+    create = [c["argv"] for c in calls(tmp_path, "gh.jsonl") if c["argv"][:2] == ["pr", "create"]]
+    title = create[0][create[0].index("--title") + 1]
+    assert len(title) <= 80 and title.startswith("t-1: ")
+    assert title.endswith("…") and title[:-1].split(" ")[-1] in long_title.split(" ")
+
+
 def test_driver_needs_nimrod_when_diff_touches_validator(cfg, repo, tmp_path):
     work = repo(ORDINARY.replace("paths=app.py,tests/", "paths=validator.py,tests/"))
     assert drive(cfg, work, tmp_path) == 1

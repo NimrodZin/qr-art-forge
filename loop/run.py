@@ -128,6 +128,17 @@ def excerpt(text: str, n: int = 20) -> str:
     return "\n".join(lines[:n]) + more
 
 
+def pr_title(step, limit: int = 72) -> str:
+    """`<id>: <title>`, cut on a word boundary with '…' past `limit` (GitHub allows 256; issue #39)."""
+    title = f"{step.id}: {step.title}"
+    if len(title) <= limit:
+        return title
+    cut = title[:limit - 1]
+    if " " in cut[len(step.id) + 2:]:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ·,;:-") + "…"
+
+
 def quoted(title: str, text: str) -> str:
     return f"**{title}:**\n\n" + "\n".join("> " + l for l in text.splitlines())
 
@@ -209,7 +220,7 @@ class Driver:
         body += "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
         if not self.pr_url:
             _, out, _ = gh(self.cfg, self.repo, "pr", "create", "--base", self.base, "--head", branch,
-                           "--title", f"{step.id}: {step.title}", "--body", body)
+                           "--title", pr_title(step), "--body", body)
             self.pr_url = out.strip().splitlines()[-1]
             self.log(step, f"PR {self.pr_url}")
         elif ui != self.ui:
