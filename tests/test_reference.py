@@ -509,20 +509,20 @@ def test_ui_reference_image_and_strength_in_advanced():  # row 23
     assert _in_advanced(img) and _in_advanced(sl)
 
 
-def test_forge_click_has_eleven_inputs():  # row 24
+def test_forge_click_has_twelve_inputs():  # row 24; m2-15 appends Style
     import gradio as gr
     demo = app.build_ui()
     (btn,) = [b for b in demo.blocks.values() if isinstance(b, gr.Button) and b.value == "Forge"]
     (dep,) = [f for f in demo.fns.values() if (btn._id, "click") in f.targets]
     ins = dep.inputs
-    assert len(ins) == 11
+    assert len(ins) == 12
     expected = [(gr.Textbox, "URL or text"), (gr.Textbox, "Image prompt"),
                 (gr.Slider, "Batch size"),
                 (gr.Slider, "QR strength (higher = scans easier, looks more like a code)"),
                 (gr.Slider, "Steps"), (gr.Slider, "Guidance (CFG)"),
                 (gr.Checkbox, "Rescue near-misses"), (gr.Number, "Seed (-1 = random)"),
                 (gr.Textbox, "Negative prompt (added to the built-in list)"),
-                (gr.Image, REF_LABEL), (gr.Slider, STRENGTH_LABEL)]
+                (gr.Image, REF_LABEL), (gr.Slider, STRENGTH_LABEL), (gr.Dropdown, "Style")]
     assert [(type(c), c.label) for c in ins] == expected
     demo.get_api_info()
 
