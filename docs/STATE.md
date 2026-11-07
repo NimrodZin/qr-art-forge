@@ -1,1 +1,1 @@
-Main at 8328e40 · phase C · M2 · last merged m2-10 (#34) · m2-12 parked (#40) · next: scheduling/framing batch (local/, manual) · carried: m2-10b WeChat decoder; m2-5 needs 02 v0.5; loop PR-title fix
+Main at e48ae9a · phase C · M2 · last merged m2-10 (#34) · m2-12 parked (#40) · next m2-14 validator 02 v0.5 (thin no longer passes) · carried: m2-10b WeChat decoder; m2-5 needs 02 v0.6; m2-9b; lotus invite QR

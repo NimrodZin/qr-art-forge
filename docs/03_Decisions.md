@@ -1,11 +1,11 @@
-# 03 — Decisions v0.8 (2026-10-18)
+# 03 — Decisions v0.9 (2026-11-07)
 
 Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidence) · Provisional (built on; flagged when a task exposes a reason to revisit) · Open (never silently resolved; a dependent task names it and takes the smallest hedge) · Superseded (kept, with pointer).
 
 ## Decided
 - D1 Base pipeline v1: SD1.5 + QR Code Monster v2 ControlNet (`monster-labs/control_v1p_sd15_qrcode_monster`, subfolder v2); DreamShaper 8 checkpoint, swappable via `BASE_MODEL`.
 - D2 Hosting v1: Hugging Face Space, ZeroGPU, mirrored from GitHub. Note 2026-09-26: the Space stays up but is not promoted; development and the loop run on the Windows PC; public production is decided at M3 (see O2).
-- D3 Validation contract as in 02 v0.4: phone-like decode (3 binarizers × 3 softening levels, any-hit) gates on `full` ∧ `small`; `tilt` scored and reported, not gating; per-condition hits and a thin flag reported; OpenCV advisory. (Superseded: v0.1 two decoders/four conditions; v0.2 zxing single-binarizer; v0.3 tilt gated.)
+- D3 Validation contract as in 02 v0.5: phone-like decode (3 binarizers × 3 softening levels, any-hit) gates on `full` ∧ `small`, with `small` hit by ≥ 2 of the nine combos (a thin candidate does not pass); `tilt` scored and reported, not gating; per-condition hits and the thin flag reported; OpenCV advisory. (Superseded: v0.1 two decoders/four conditions; v0.2 zxing single-binarizer; v0.3 tilt gated; v0.4 thin passed.)
 - D4 No accounts, no persistence, no payment in v1.
 - D5 Workflow: Autonomous Build Loop; local orchestrator on Nimrod's Windows PC (E:\qr-art-forge) via `claude -p`; the Mac is courier only. (Superseded 2026-09-26: 'on Nimrod's Mac'.) GitHub PRs + Actions.
 - D6 Gradio 5.x replaces Gradio 4.x in the stack (PR #4).
@@ -32,3 +32,4 @@ Statuses: Decided (settled; not re-argued unless Nimrod raises it or new evidenc
 - v0.6 (2026-10-11) - P6 added: reference image never stored. Provenance: Nimrod, planner chat 2026-10-11, 'A'.
 - v0.7 (2026-10-17) — note under D3: validator tightening (02 v0.4) queued on F1 evidence. Provenance: Nimrod, planner chat 2026-10-17, 'A'.
 - v0.8 (2026-10-18) — D3 → 02 v0.4 (tilt no longer gates; hits and thin reported); the 2026-10-17 note dropped. Provenance: F1 phone-truth set, run 20261017-143330; Nimrod, planner chat 2026-10-18, 'A'.
+- v0.9 (2026-11-07) — D3 → 02 v0.5 (thin no longer passes). Provenance: scheduling batch phone set (04 gate log 2026-11-07); Nimrod, planner chat 2026-11-07, 'A'.
