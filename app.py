@@ -19,6 +19,9 @@ IPA_REPO = "h94/IP-Adapter"
 IPA_SUBFOLDER = "models"
 IPA_WEIGHT = "ip-adapter_sd15.bin"
 REF_SCALE = 0.5
+REF_ERROR = ("Couldn't read the style reference image. It may be a format we can't open "
+             "(such as AVIF) or an upload that has expired. Please re-upload it as a PNG "
+             "or JPG, or clear it to forge without a reference.")
 NEG = ("ugly, disfigured, low quality, blurry, nsfw, text, watermark, "
        "flat, grid, checkerboard, monochrome squares")
 
@@ -224,6 +227,16 @@ def forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative="",
 
 
 # ---------------------------------------------------------------- UI
+def reference_preprocess(original):
+    """Wrap gr.Image.preprocess: an upload Pillow cannot read, or one delete_cache has purged, becomes REF_ERROR."""
+    def preprocess(payload):
+        try:
+            return original(payload)
+        except (OSError, SyntaxError, Image.DecompressionBombError):
+            raise gr.Error(REF_ERROR, print_exception=False) from None
+    return preprocess
+
+
 def build_ui() -> gr.Blocks:
     with gr.Blocks(title="QR Art Forge", delete_cache=(3600, 3600)) as demo:
         gr.Markdown("# QR Art Forge\n"
@@ -244,6 +257,7 @@ def build_ui() -> gr.Blocks:
                                               lines=2, value="", placeholder="e.g. people, hands, red")
                     reference_img = gr.Image(label="Style reference image (optional)", type="pil",
                                              sources=["upload"], height=160)
+                    reference_img.preprocess = reference_preprocess(reference_img.preprocess)
                     reference_strength = gr.Slider(0.0, 1.0, value=REF_SCALE, step=0.05,
                                                    label="Reference strength")
                     rescue = gr.Checkbox(value=True, label="Rescue near-misses")
