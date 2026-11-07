@@ -2,6 +2,7 @@
 import pytest
 from PIL import Image
 import app
+import validator
 from qrbuild import make_qr
 
 PAY = "nimrodzin.com"
@@ -107,3 +108,79 @@ def test_served_pixels_are_validated_pixels(tmp_path):
     (served,) = g.postprocess(surv).root
     decoded = np.array(Image.open(served.image.path).convert("RGB"))
     assert np.array_equal(decoded, np.array(surv[0][0].convert("RGB")))
+
+
+# --- 02 v0.5: a thin candidate stays out of the gallery and stays rescue-eligible ---
+
+THIN = {"full": 2, "small": 1, "tilt": 0}
+SOLID = {"full": 3, "small": 3, "tilt": 3}
+CANDIDATE = Image.new("RGB", (768, 768), (90, 90, 90))
+RESCUED = Image.new("RGB", (768, 768), (91, 91, 91))
+
+
+def _validate_with_hits(monkeypatch, counts_by_image):
+    """app.validate = the real validator.validate, under a stub of D chosen per candidate."""
+    def validate(im, payload):
+        counts = counts_by_image[id(im)]
+        real = validator._conditions
+        names = {}
+
+        def conditions(img):
+            out = real(img)
+            names.update({id(v): c for c, v in out.items()})
+            return out
+        with pytest.MonkeyPatch.context() as m:
+            m.setattr(validator, "_conditions", conditions)
+            m.setattr(validator, "_phone_hits",
+                      lambda img, expected: ["LA@S0", "GH@S0", "FT@S0"][:counts[names[id(img)]]])
+            return validator.validate(im, payload)
+    monkeypatch.setattr(app, "validate", validate)
+
+
+def _archived(monkeypatch):
+    """Spy on what run_forge hands to the reject archive: (label, image, validate-result)."""
+    seen = []
+    real = app.build_reject_records
+
+    def build(payload, settings, entries, *a, **k):
+        seen.extend(entries)
+        return real(payload, settings, entries, *a, **k)
+    monkeypatch.setattr(app, "build_reject_records", build)
+    return seen
+
+
+def _forge_one_candidate(rescue, rescue_returns=None):
+    calls = []
+    pipes = {"gen": lambda *a, **k: [CANDIDATE],
+             "rescue": lambda *a, **k: (calls.append(1), rescue_returns)[1]}
+    surv, report, _ = app.run_forge(PAY, "p", 1, 1.35, 25, 7, rescue, 5, pipes=pipes)
+    return surv, report, calls
+
+
+def test_v5_thin_candidate_stays_out_of_the_gallery(monkeypatch):  # spec row 19
+    _validate_with_hits(monkeypatch, {id(CANDIDATE): THIN})
+    archived = _archived(monkeypatch)
+    surv, report, calls = _forge_one_candidate(rescue=False)
+    assert surv == [] and "0/1 passed" in report and calls == []
+    ((label, im, v),) = archived
+    assert label == "seed5" and im is CANDIDATE
+    assert v["pass"] is False and v["thin"] is True
+
+
+def test_v5_thin_candidate_is_rescued_and_only_the_rescue_survives(monkeypatch):  # spec row 20
+    _validate_with_hits(monkeypatch, {id(CANDIDATE): THIN, id(RESCUED): SOLID})
+    surv, report, calls = _forge_one_candidate(rescue=True, rescue_returns=RESCUED)
+    assert calls == [1]
+    assert len(surv) == 1 and surv[0][0] is RESCUED
+    assert "→ rescue PASS" in report
+
+
+def test_v5_thin_rescue_of_a_thin_candidate_is_dropped(monkeypatch):  # spec row 21
+    _validate_with_hits(monkeypatch, {id(CANDIDATE): THIN, id(RESCUED): THIN})
+    archived = _archived(monkeypatch)
+    surv, report, calls = _forge_one_candidate(rescue=True, rescue_returns=RESCUED)
+    assert calls == [1] and surv == []
+    assert "→ rescue FAIL" in report
+    assert [label for label, _, _ in archived] == ["seed5", "seed5-rescue"]
+    assert archived[0][1] is CANDIDATE and archived[1][1] is RESCUED
+    assert all(v["pass"] is False for _, _, v in archived)

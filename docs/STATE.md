@@ -1,1 +1,1 @@
-Main at e48ae9a · phase C · M2 · last merged m2-10 (#34) · m2-12 parked (#40) · next m2-14 validator 02 v0.5 (thin no longer passes) · carried: m2-10b WeChat decoder; m2-5 needs 02 v0.6; m2-9b; lotus invite QR
+Main at 443c885 · phase C · M2 · last merged m2-14 (#41, merged by hand: lane closed) · next m2-10b WeChat decoder (m2-12 parked, #40) · carried: report line for thin rejects; archive omits thin (Nimrod's call); seed 10 text says v0.4; m2-5 needs 02 v0.6; m2-9b; lotus invite QR

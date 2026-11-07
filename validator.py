@@ -1,7 +1,8 @@
-"""Scan validation for aesthetic QR codes (docs/02 v0.4).
+"""Scan validation for aesthetic QR codes (docs/02 v0.5).
 
 A candidate passes only if the phone-like decode D succeeds on `full` and
-`small`; `tilt` is still computed, reported and scored, but does not gate.
+`small` and at least two combos hit on `small`; `tilt` is still computed,
+reported and scored, but does not gate.
 D = zxing-cpp with three binarizers on the variant and on two softened copies
 of it; any exact hit counts, and every combo is tried so the report can list
 the ones that hit. OpenCV is run on the unsoftened variant and reported as
@@ -89,9 +90,10 @@ def validate(pil_img: Image.Image, expected: str) -> dict:
 
     "zx" is the phone-like decode D (bool): pass needs it on full and small, score
     counts it on all three. "hits" lists the D combos that read the payload and
-    "hit_count" is their number (0-9). "thin" flags a pass whose small condition
-    hit on exactly one combo. "cv" is OpenCV on the unsoftened variant, advisory
-    only, and never affects pass, score or thin.
+    "hit_count" is their number (0-9); pass also needs small hit_count >= 2.
+    "thin" flags a candidate with D on full and small whose small condition hit on
+    exactly one combo; it does not pass. "cv" is OpenCV on the unsoftened variant,
+    advisory only, and never affects pass, score or thin.
     """
     img = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
     results = {}
@@ -101,8 +103,9 @@ def validate(pil_img: Image.Image, expected: str) -> dict:
                          "hits": hits, "hit_count": len(hits)}
     score = sum(r["zx"] for r in results.values())
     passed = all(results[c]["zx"] for c in GATES)
-    return {"pass": passed, "score": score, "max": len(results), "results": results,
-            "thin": passed and results["small"]["hit_count"] == 1}
+    thin = passed and results["small"]["hit_count"] == 1
+    passed = passed and results["small"]["hit_count"] >= 2
+    return {"pass": passed, "score": score, "max": len(results), "results": results, "thin": thin}
 
 
 def summary_line(v: dict) -> str:

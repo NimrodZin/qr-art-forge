@@ -97,6 +97,8 @@ def test_summary_line_mixed():
 
 # --- v0.3: phone-like decode D(img) = 3 binarizers x {img, S_1, S_2}, any-hit ---
 
+import json
+
 import cv2
 import pytest
 import zxingcpp
@@ -343,11 +345,26 @@ def _small_hits_only(binarizers):
     return zx
 
 
-def test_v4_small_hit_by_exactly_one_combo_is_pass_and_thin(monkeypatch):
+def test_v5_small_hit_by_exactly_one_combo_is_thin_and_fails(monkeypatch):  # spec row 14
     monkeypatch.setattr(validator, "_zx_read", _small_hits_only({BIN.LocalAverage}))
     v = validate(make_qr(PAY), PAY)
-    assert v["pass"] is True and v["thin"] is True
+    assert v["pass"] is False and v["thin"] is True and v["score"] == 3
     assert v["results"]["small"]["hits"] == ["LA@S0"] and v["results"]["small"]["hit_count"] == 1
+
+
+def test_v5_summary_line_of_a_thin_candidate_reads_fail(monkeypatch):  # spec row 15
+    monkeypatch.setattr(validator, "_zx_read", _small_hits_only({BIN.LocalAverage}))
+    line = summary_line(validate(make_qr(PAY), PAY))
+    assert line.startswith("FAIL ") and "small zx✓" in line and line.endswith("(3/3)")
+
+
+def test_v5_thin_result_keeps_its_shape_and_serialises(monkeypatch):  # spec row 17: the archive dumps it
+    monkeypatch.setattr(validator, "_zx_read", _small_hits_only({BIN.LocalAverage}))
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is False and v["thin"] is True                     # plain bools, not numpy ones
+    assert set(v) == {"pass", "score", "max", "results", "thin"}
+    back = json.loads(json.dumps(v))
+    assert back["pass"] is False and back["thin"] is True
 
 
 def test_v4_small_hit_by_two_combos_is_pass_not_thin(monkeypatch):
@@ -357,8 +374,8 @@ def test_v4_small_hit_by_two_combos_is_pass_not_thin(monkeypatch):
     assert v["results"]["small"]["hits"] == ["LA@S0", "GH@S0"] and v["results"]["small"]["hit_count"] == 2
 
 
-def test_v4_thin_needs_a_pass(monkeypatch):
-    # small hit by one combo, but full misses: a fail is never thin.
+def test_v5_thin_needs_full_and_small(monkeypatch):
+    # small hit by one combo, but full misses: without a decode on full it is not thin.
     small_one = _small_hits_only({BIN.LocalAverage})
     monkeypatch.setattr(validator, "_zx_read", lambda img, b: (
         "" if img.shape[0] == 768 and img[0, 0, 0] < 200 else small_one(img, b)))
@@ -367,11 +384,55 @@ def test_v4_thin_needs_a_pass(monkeypatch):
     assert v["results"]["small"]["hit_count"] == 1 and v["thin"] is False
 
 
-def test_v4_clean_qr_is_not_thin():
+def test_v4_clean_qr_is_not_thin():  # spec row 18
     v = validate(make_qr(PAY), PAY)
-    assert v["pass"] is True and v["thin"] is False and v["results"]["small"]["hit_count"] > 1
+    assert v["pass"] is True and v["thin"] is False and v["score"] == 3
+    assert v["results"]["small"]["hit_count"] > 1
 
 
 def test_v4_bin_codes_and_gates():
     assert [validator._BIN_CODE[b] for b in validator.BINARIZERS] == ["LA", "GH", "FT"]
     assert validator.GATES == ("full", "small")
+
+
+# --- v0.5: pass also needs small hit_count >= 2; thin = D on full and small, small hit_count = 1 ---
+
+COMBOS = ["LA@S0", "GH@S0", "FT@S0", "LA@S1", "GH@S1", "FT@S1", "LA@S2", "GH@S2", "FT@S2"]
+
+
+def _hit_counts(monkeypatch, counts):
+    """D hits the first counts[cond] combos on each condition; validate otherwise runs as is."""
+    real = validator._conditions
+    names = {}
+
+    def conditions(img):
+        out = real(img)
+        names.update({id(v): c for c, v in out.items()})
+        return out
+    monkeypatch.setattr(validator, "_conditions", conditions)
+    monkeypatch.setattr(validator, "_phone_hits", lambda img, expected: COMBOS[:counts[names[id(img)]]])
+
+
+@pytest.mark.parametrize("full,small,tilt,passes,thin,score", [
+    (2, 2, 2, True, False, 3),           # 1: the boundary of the margin
+    (1, 2, 0, True, False, 2),           # 2: the margin is on small only; tilt does not gate
+    (9, 9, 9, True, False, 3),           # 3: maximum hits
+    (2, 3, 1, True, False, 3),           # 4: one hit on tilt has no effect
+    (2, 1, 2, False, True, 3),           # 5: thin, even at a full score
+    (9, 1, 0, False, True, 2),           # 6: thin; many hits on full do not compensate
+    (1, 1, 1, False, True, 3),           # 7: thin
+    (0, 1, 2, False, False, 2),          # 8: full misses, so not thin
+    (0, 2, 2, False, False, 2),          # 9: the margin does not replace the full gate
+    (2, 0, 2, False, False, 2),          # 10: small misses, so not thin
+    (1, 0, 0, False, False, 1),          # 11: gate miss
+    (0, 0, 1, False, False, 1),          # 12: tilt only
+    (0, 0, 0, False, False, 0)])         # 13: nothing decodes
+def test_v5_pass_thin_and_score(monkeypatch, full, small, tilt, passes, thin, score):
+    counts = {"full": full, "small": small, "tilt": tilt}
+    _hit_counts(monkeypatch, counts)
+    v = validate(make_qr(PAY), PAY)
+    assert v["pass"] is passes and v["thin"] is thin
+    assert v["score"] == score and v["max"] == 3
+    for cond, n in counts.items():
+        r = v["results"][cond]
+        assert r["zx"] is (n > 0) and r["hits"] == COMBOS[:n] and r["hit_count"] == n
