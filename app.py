@@ -10,6 +10,7 @@ from typing import Callable, Mapping
 import gradio as gr
 from PIL import Image
 
+from styles import STYLE_CHOICES, STYLE_NONE, apply_style, style_strength
 from qrbuild import normalize_payload, make_qr, PayloadError, SIZE
 from validator import validate, summary_line
 
@@ -24,8 +25,6 @@ REF_ERROR = ("Couldn't read the style reference image. It may be a format we can
              "or JPG, or clear it to forge without a reference.")
 NEG = ("ugly, disfigured, low quality, blurry, nsfw, text, watermark, "
        "flat, grid, checkerboard, monochrome squares")
-
-from styles import STYLE_CHOICES, STYLE_NONE, apply_style, style_strength
 
 try:
     import spaces
