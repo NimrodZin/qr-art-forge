@@ -31,7 +31,7 @@ def image_data(path, name):
 
 
 def make_inputs(ref):
-    return ["example.com", "p", 1, 1.35, 25, 7, False, 1, "", ref, 0.5]
+    return ["example.com", "p", 1, 1.35, 25, 7, False, 1, "", ref, 0.5, "None"]
 
 
 def save_image(path):

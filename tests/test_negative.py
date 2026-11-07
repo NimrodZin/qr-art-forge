@@ -168,10 +168,11 @@ def test_forge_click_inputs_end_with_negative():  # row 18, 19
     (btn,) = [b for b in demo.blocks.values() if isinstance(b, gr.Button) and b.value == "Forge"]
     (dep,) = [f for f in demo.fns.values() if (btn._id, "click") in f.targets]
     ins = dep.inputs
-    assert len(ins) == 11  # m2-9 spec row 24 supersedes 9: reference Image + strength Slider
+    assert len(ins) == 12  # m2-9 row 24 added reference Image + strength Slider; m2-15 row 12 Style
     assert ins[8] is box
     assert isinstance(ins[9], gr.Image) and ins[9].label == "Style reference image (optional)"
     assert isinstance(ins[10], gr.Slider) and ins[10].label == "Reference strength"
+    assert isinstance(ins[11], gr.Dropdown) and ins[11].label == "Style"
     expected = [(gr.Textbox, "URL or text"), (gr.Textbox, "Image prompt"),
                 (gr.Slider, "Batch size"),
                 (gr.Slider, "QR strength (higher = scans easier, looks more like a code)"),

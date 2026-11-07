@@ -10,6 +10,7 @@ from typing import Callable, Mapping
 import gradio as gr
 from PIL import Image
 
+from styles import STYLE_CHOICES, STYLE_NONE, apply_style, style_strength
 from qrbuild import normalize_payload, make_qr, PayloadError, SIZE
 from validator import validate, summary_line
 
@@ -238,6 +239,16 @@ def reference_preprocess(original):
 
 
 def build_ui() -> gr.Blocks:
+    def forge_with_style(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative,
+                         reference, reference_scale, style_name, progress=gr.Progress()):
+        prompt, negative = apply_style(style_name, prompt, negative)
+        return forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative,
+                     reference, reference_scale, progress=progress)
+
+    def strength_for_style(style_name):
+        strength = style_strength(style_name)
+        return gr.skip() if strength is None else strength
+
     with gr.Blocks(title="QR Art Forge", delete_cache=(3600, 3600)) as demo:
         gr.Markdown("# QR Art Forge\n"
                     "Aesthetic QR codes a human sees as a picture and a phone reads as a link. "
@@ -247,6 +258,7 @@ def build_ui() -> gr.Blocks:
                 payload = gr.Textbox(label="URL or text", placeholder="example.com")
                 prompt = gr.Textbox(label="Image prompt", lines=3,
                                     placeholder="a peony in full bloom, botanical illustration, dark background")
+                style = gr.Dropdown(choices=STYLE_CHOICES, value=STYLE_NONE, label="Style")
                 with gr.Accordion("Advanced", open=False):
                     batch = gr.Slider(1, 8, value=4, step=1, label="Batch size")
                     weight = gr.Slider(0.8, 2.0, value=1.35, step=0.05,
@@ -268,9 +280,10 @@ def build_ui() -> gr.Blocks:
                 gallery = gr.Gallery(label="Scannable results", columns=2, height=560, format="png")
                 report = gr.Textbox(label="Scan report", lines=8)
                 ctrl = gr.Image(label="Control image used", height=200)
-        go.click(forge, [payload, prompt, batch, weight, steps, cfg, rescue, seed, negative_box,
-                        reference_img, reference_strength],
-                 [gallery, report, ctrl])
+        go.click(forge_with_style, [payload, prompt, batch, weight, steps, cfg, rescue, seed, negative_box,
+                                    reference_img, reference_strength, style],
+                 [gallery, report, ctrl], api_name="forge")
+        style.change(strength_for_style, [style], [weight], queue=False, show_progress="hidden")
         gr.Markdown("**Tips** — keep payloads short; subjects with strong light/dark structure hide the "
                     "code best; if nothing passes, raise QR strength by 0.2 and retry.")
     return demo
