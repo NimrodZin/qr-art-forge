@@ -1,4 +1,4 @@
-# 01 — Brief v1.0 (2026-09-23)
+# 01 — Brief v1.1 (2026-11-07)
 
 ## Who it is for
 - v1: Nimrod and fellow designers/producers who need a scannable poster or programme code that looks like art.
@@ -7,6 +7,7 @@ Ruling: one primary path (URL + prompt + Forge) with all knobs behind "Advanced"
 
 ## What ships first (v1)
 A public Hugging Face Space where a user enters a URL and a prompt and receives only scannable results, 768 px, with a scan report. No accounts, no payment, no history. Everything else (upscaling, presets, batch export, own-domain site) is v2.
+Exception: style presets move into M2 as a Style dropdown on the primary path (05 OD 14, 04 m2-15). Nimrod, planner chat 2026-11-07, 'A'.
 
 ## Success criteria (v1)
 1. Gate: Nimrod scans 3 of 3 outputs on iPhone and Android at arm's length and lands on the exact payload.
@@ -14,3 +15,6 @@ A public Hugging Face Space where a user enters a URL and a prompt and receives 
 3. Look: among survivors, at least one Nimrod would put on a poster — his call, recorded in the gate note.
 4. Time: a 4-image batch returns in under 3 minutes on ZeroGPU.
 5. Nothing unscannable is ever displayed (hard constraint, tested).
+
+## Changes
+- v1.1 (2026-11-07) — style presets pulled from v2 into M2. Provenance: Nimrod, planner chat 2026-11-07, 'A'.
