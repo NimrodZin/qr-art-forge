@@ -1,4 +1,4 @@
-# 06 — Loop Spec v0.7 (2026-10-08)
+# 06 — Loop Spec v0.7.1 (2026-11-07)
 
 The automated build loop for QR Art Forge. Runs on Nimrod's Windows PC (RTX 4070) in `E:\qr-art-forge`, on his Claude subscription, via `claude -p`; the Mac is courier only. GitHub for PRs and CI. Nothing here overrides 00–05; where they conflict, 00–05 win.
 
@@ -52,13 +52,13 @@ The Architect names the lane in the spec. Never-economize-lane steps auto-merge 
 
 ## 5. Guards
 
-- Caps: 3 steps/day, 2 implementer attempts/step, `--max-turns 40` per session, daily spend ceiling read from session JSON `total_cost_usd` (USD 40 equivalent (Nimrod, 2026-09-29); subscription usage counts the same way). Any cap hit → loop pauses, state line posted as an issue.
+- Caps: 3 steps/day, 2 implementer attempts/step, `--max-turns 40` per session, daily spend ceiling read from session JSON `total_cost_usd` (USD 150 (Nimrod, 2026-11-07: "i don't care about the cap"; was 40, 2026-09-29); subscription usage counts the same way). Any cap hit → loop pauses, state line posted as an issue.
 - Stop on **two consecutive red reviews** on the same step.
 - Pinned versions: sessions run in the repo's `.venv` from `requirements-ci.txt`; CI uses the same file.
 - Provenance: any `docs/` change must cite `file:line` or a quoted decision of Nimrod's (issue/PR comment URL); the Reviewer rejects otherwise.
 - No secrets in git. Sessions, pytest and `sh.run` get `HF_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `ANTHROPIC_API_KEY` and `REJECTS_REPO` stripped; only the GPU test process keeps them. `gh` and `git push` run on their on-disk auth. Residual (accepted until M3): gh's on-disk auth is readable by test code the driver runs.
 - The header line is advisory; the orchestrator verifies the model from `modelUsage` (§1).
-- Preflight: `claude --version` must run; for GPU steps nvidia-smi must show ≥ 7 GB free and ≤ 10 % utilisation (also re-checked before each GPU run); CI is awaited on the pushed head SHA, never on the PR's previous checks.
+- Preflight: `claude --version` must run; for GPU steps nvidia-smi must show ≥ 7 GB free and ≤ 50 % utilisation (also re-checked before each GPU run); CI is awaited on the pushed head SHA, never on the PR's previous checks.
 
 ## 6. Reviewer calibration (before never-economize auto-merge)
 
@@ -87,3 +87,4 @@ After every merge the orchestrator writes `docs/STATE.md`: `Main at <hash> · ph
 - v0.5 (2026-10-03) — gpu_env + double GPU run; secrets stripped from sessions and pytest; gate = run_forge/forge spans + validate token; unprimed calibration with control seeds 9–11; mutation bar on non-equivalent mutants. Provenance: planner audit F2–F4, chat 2026-10-03; PR #21.
 - v0.6 (2026-10-03) — never-economize lane opened (config open=true) on 07 v0.2 verdict yes. Provenance: Nimrod, planner chat 2026-10-03, PR #23.
 - v0.7 (2026-10-08) — preflight guards; CI keyed on head SHA. Provenance: issues #26, #28; planner chat 2026-10-08; PR #29.
+- v0.7.1 (2026-11-07) — §5 utilisation limit 10 % → 50 %, matching the config since 2026-10-19 (remote-desktop screen encoding holds 35–40 %; a generation runs near 100 %; the 7 GB free check catches a loaded ComfyUI). Provenance: loop/config.toml:27, commit ebf1032. Daily spend ceiling 40 → 150 USD; 3 steps/day still bounds a day. Provenance: Nimrod, planner chat 2026-11-07, "i don't care about the cap" (after issue #45).
