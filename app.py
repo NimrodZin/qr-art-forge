@@ -242,8 +242,13 @@ def build_ui() -> gr.Blocks:
     def forge_with_style(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative,
                          reference, reference_scale, style_name, progress=gr.Progress()):
         prompt, negative = apply_style(style_name, prompt, negative)
-        return forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative,
-                     reference, reference_scale, progress=progress)
+        try:
+            return forge(payload, prompt, batch, weight, steps, cfg, rescue, seed, negative,
+                         reference, reference_scale, progress=progress)
+        except gr.Error as e:
+            text = "Couldn't forge: " + e.message
+            gr.Warning(text)
+            return [], text, None
 
     def strength_for_style(style_name):
         strength = style_strength(style_name)
