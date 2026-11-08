@@ -332,14 +332,12 @@ def test_gate_still_decides_with_a_style(ui, monkeypatch):  # row 21
     assert "1/3 passed" in report
 
 
-def test_long_payload_is_still_rejected(ui, monkeypatch):  # row 22
+def test_long_payload_is_still_rejected(ui, monkeypatch):  # m2-16 row 2, replacing m2-15 row 22
     long_payload = "https://example.com/" + "x" * 80
     with pytest.raises(PayloadError) as want:
         normalize_payload(long_payload)
     calls = use_pipes(monkeypatch, [GOOD])
-    with pytest.raises(gr.Error) as e:
-        call_handler(ui, payload=long_payload)
-    assert e.value.message == str(want.value)
+    assert call_handler(ui, payload=long_payload) == ([], "Couldn't forge: " + str(want.value), None)
     assert calls["gen"] == []
 
 
