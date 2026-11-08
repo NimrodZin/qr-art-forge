@@ -14,7 +14,7 @@ from styles import STYLE_CHOICES, STYLE_NONE, apply_style, style_strength
 from qrbuild import normalize_payload, make_qr, PayloadError, SIZE
 from validator import validate, summary_line
 
-BASE = os.environ.get("BASE_MODEL", "Lykon/dreamshaper-8")
+BASE = os.environ.get("BASE_MODEL", "SG161222/Realistic_Vision_V5.1_noVAE")
 CN = "monster-labs/control_v1p_sd15_qrcode_monster"
 IPA_REPO = "h94/IP-Adapter"
 IPA_SUBFOLDER = "models"
