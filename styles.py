@@ -18,11 +18,6 @@ STYLES = {
                        "tesserae, irregular grout, soft daylight, photographed from directly above"),
         negative_suffix=STYLE_NEGATIVE,
         strength=1.35),
-    "Stained glass": Style(
-        prompt_suffix=("as a leaded stained glass window, coloured cathedral glass pieces "
-                       "joined by thin lead came, backlit by daylight, front view"),
-        negative_suffix=STYLE_NEGATIVE,
-        strength=1.35),
     "Rug": Style(
         prompt_suffix=("woven into a hand-knotted wool rug, dense pile, natural dyes, "
                        "geometric border, photographed from directly above"),

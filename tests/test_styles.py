@@ -1,4 +1,5 @@
-"""m2-15: style presets on the main path (OD 14, order B). Rows refer to steps/m2-15/spec.md §2.
+"""m2-15: style presets on the main path (OD 14, order B). Rows refer to steps/m2-15/spec.md §2,
+except the m2-17 section at the end, whose rows refer to steps/m2-17/spec.md §2.
 CPU only; generation is mocked. `styles` is imported inside each test so that a missing module
 fails the tests one by one."""
 import ast
@@ -30,13 +31,11 @@ SETTINGS_KEYS = {"prompt", "batch", "weight", "steps", "cfg", "rescue", "seed"}
 META_KEYS = {"run_id", "label", "payload", "settings", "pass", "score", "max", "results",
              "reference"}
 STRENGTH_LABEL = "QR strength (higher = scans easier, looks more like a code)"
-CHOICES = ["None", "Mosaic", "Stained glass", "Rug", "Embroidery"]
+CHOICES = ["None", "Mosaic", "Rug", "Embroidery"]
 STYLE_NEG = "text, letters, words, watermark, signature"
 SUFFIXES = {
     "Mosaic": ("as an ancient Roman floor mosaic, small square marble and lapis tesserae, "
                "irregular grout, soft daylight, photographed from directly above"),
-    "Stained glass": ("as a leaded stained glass window, coloured cathedral glass pieces joined "
-                      "by thin lead came, backlit by daylight, front view"),
     "Rug": ("woven into a hand-knotted wool rug, dense pile, natural dyes, geometric border, "
             "photographed from directly above"),
     "Embroidery": ("as hand embroidery on natural linen, french knots and satin stitch, "
@@ -129,8 +128,8 @@ def test_prompt_gets_the_exact_suffix(name):  # row 2
     assert prompt == "a cat, " + SUFFIXES[name]
 
 
-def test_table_holds_the_four_styles_verbatim():  # row 2, 3
-    assert set(S().STYLES) == set(SUFFIXES)
+def test_table_holds_the_three_styles_verbatim_in_order():  # row 2, 3; m2-17 rows 2, 3
+    assert list(S().STYLES) == ["Mosaic", "Rug", "Embroidery"]
     assert {n: st.prompt_suffix for n, st in S().STYLES.items()} == SUFFIXES
 
 
@@ -509,3 +508,38 @@ def test_gate_spans_on_the_working_tree():  # row 34
     single = [s for s in spans if s[0] == s[1]]
     assert len(single) == 1
     assert source.splitlines()[single[0][0] - 1].startswith("from validator import")
+
+
+# ---------------------------------------------------------------- m2-17: Stained glass out
+REMOVED = "Stained glass"
+
+
+def test_removed_style_is_an_unknown_name():  # m2-17 row 5
+    with pytest.raises(KeyError):
+        S().apply_style(REMOVED, "a cat", "")
+    with pytest.raises(KeyError):
+        S().style_strength(REMOVED)
+
+
+def test_gradio_path_rejects_the_removed_style(ui, run_forge_calls):  # m2-17 row 6
+    with pytest.raises(gr.Error) as e:
+        process_api(ui, inputs_for(REMOVED))
+    assert REMOVED in e.value.message
+    assert run_forge_calls == []
+
+
+def test_handler_raises_on_the_removed_style_without_forging(ui, forge_calls):  # m2-17 row 7
+    with pytest.raises(KeyError):
+        call_handler(ui, style=REMOVED)
+    assert forge_calls.calls == []
+
+
+def test_styles_module_no_longer_names_it():  # m2-17 row 8
+    assert "stained" not in Path(S().__file__).read_text(encoding="utf-8").lower()
+
+
+@pytest.mark.parametrize("name", list(SUFFIXES))
+def test_remaining_styles_keep_strength_and_slider(style_dep, name):  # m2-17 row 10
+    styles = S()
+    assert styles.style_strength(name) == 1.35
+    assert style_dep.dep.fn(name) == styles.STYLES[name].strength == 1.35
